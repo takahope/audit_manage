@@ -1,0 +1,2332 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>稽核駐站分配</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    /* ===== Design Tokens ===== */
+    :root {
+      --color-primary:   #1f3a2e;  /* 審計墨綠 */
+      --color-primary-soft: #e7ede9;
+      --color-accent:    #b98a2f;  /* 認證章金 */
+      --color-accent-soft: #f5edda;
+      --color-pending:   #2c4a66;  /* 墨藍：待稽核 */
+      --color-pending-soft: #e6ecf2;
+      --color-danger:    #a13c2f;  /* 磚紅：待辦/錯誤 */
+      --color-surface:   #f6f4ee;  /* 米白紙面 */
+      --color-card:      #fffdf9;
+      --color-text:      #1c1c1c;
+      --color-muted:     #6f6b62;
+      --color-border:    #d9d4c8;
+
+      --font-display: 'Noto Serif TC', 'PingFang TC', serif;
+      --font-body:    'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+      --font-data:    'JetBrains Mono', 'Courier New', monospace;
+
+      --space-1: 4px; --space-2: 8px; --space-3: 16px;
+      --space-4: 24px; --space-5: 32px; --space-6: 48px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--color-surface);
+      color: var(--color-text);
+      line-height: 1.6;
+      padding-bottom: 96px; /* 預留底部動作列空間 */
+    }
+
+    .container { max-width: 1080px; margin: 0 auto; padding: 0 var(--space-3); }
+    .hidden { display: none !important; }
+
+    /* ===== 頁首 ===== */
+    .app-header {
+      background: var(--color-primary);
+      color: #fff;
+      padding: var(--space-4) 0;
+    }
+    .app-header .container { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+    .app-title { font-family: var(--font-display); font-weight: 700; font-size: 24px; }
+    .app-cycle {
+      font-family: var(--font-data); font-size: 14px;
+      color: rgba(255,255,255,.85);
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 9999px;
+      padding: 2px var(--space-3);
+    }
+
+    /* 模式切換：segmented control */
+    .mode-switch {
+      margin-left: auto;
+      display: inline-flex;
+      border: 1px solid rgba(255,255,255,.4);
+      border-radius: 4px; overflow: hidden;
+    }
+    .mode-switch button {
+      font-family: var(--font-body); font-size: 13px;
+      background: none; border: none; color: rgba(255,255,255,.75);
+      padding: var(--space-1) var(--space-3); cursor: pointer;
+    }
+    .mode-switch button.active {
+      background: var(--color-accent); color: #fff; cursor: default;
+    }
+
+    /* ===== 分頁導航（簽名元素延伸：active 底部 3px 色條） ===== */
+    .tab-bar { background: var(--color-card); border-bottom: 1px solid var(--color-border); }
+    .tab-bar .container { display: flex; gap: var(--space-2); }
+    .tab {
+      font-family: var(--font-body); font-size: 15px; font-weight: 500;
+      background: none; border: none; cursor: pointer;
+      padding: var(--space-3) var(--space-3) calc(var(--space-3) - 3px);
+      color: var(--color-muted);
+      border-bottom: 3px solid transparent;
+    }
+    .tab.active { color: var(--color-primary); border-bottom-color: var(--color-accent); font-weight: 700; }
+    .tab:hover:not(.active) { color: var(--color-text); }
+
+    /* ===== 中心稽核項目卡片 ===== */
+    .center-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+    @media (max-width: 560px) { .center-grid { grid-template-columns: 1fr; } }
+
+    .center-card {
+      background: var(--color-card);
+      border: 1px solid var(--color-border);
+      border-left-width: 3px;
+      padding: var(--space-3);
+      cursor: pointer;                 /* 點擊卡片開啟歷年稽核紀錄 */
+    }
+    .center-card:hover { border-color: var(--color-muted); }
+    .center-card .record-hint { color: var(--color-primary); }
+    .center-card.status-done     { border-left-color: var(--color-primary); }
+    .center-card.status-planned  { border-left-color: var(--color-pending); }
+    .center-card.status-pending,
+    .center-card.status-overdue  { border-left-color: var(--color-danger); }
+    .center-card.status-none     { border-left-color: var(--color-border); }
+
+    .center-card .card-head { display: flex; align-items: flex-start; gap: var(--space-2); }
+    .center-card .type-order { font-family: var(--font-data); font-size: 12px; color: var(--color-muted); }
+    .center-card .type-name { font-weight: 700; font-size: 15px; line-height: 1.4; }
+
+    .freq-chip {
+      font-size: 12px; padding: 0 var(--space-2);
+      border: 1px solid currentColor; border-radius: 9999px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .freq-triennial { color: var(--color-accent); }
+    .freq-half      { color: var(--color-pending); }
+    .freq-yearly    { color: var(--color-primary); }
+    .freq-event     { color: var(--color-danger); border-style: dashed; }
+    .freq-adhoc     { color: var(--color-muted); }
+
+    /* 資料工具列（匯出／匯入） */
+    .data-tools {
+      display: flex; align-items: center; gap: var(--space-2);
+      margin-top: var(--space-3); flex-wrap: wrap;
+    }
+    .data-tools-label { font-size: 13px; color: var(--color-muted); margin-right: var(--space-1); }
+    .btn-tool { border: 1px solid var(--color-border); color: var(--color-primary); background: var(--color-card); }
+    .btn-tool:hover { border-color: var(--color-primary); }
+
+    /* 歷年紀錄彈窗（z-index 低於確認/補登 modal，確認對話框會疊在其上） */
+    .history-overlay { z-index: 90; }
+    .history-list { list-style: none; }
+    .history-list li {
+      display: flex; align-items: baseline; gap: var(--space-2);
+      padding: var(--space-2) 0; border-bottom: 1px solid var(--color-primary-soft);
+      font-size: 14px;
+    }
+    .history-list li:last-child { border-bottom: none; }
+    .history-list .hist-main { flex: 1; line-height: 1.5; }
+    .history-list .dim { color: var(--color-muted); }
+    .hist-tag {
+      font-family: var(--font-body); font-size: 11px;
+      padding: 0 var(--space-1); margin-left: var(--space-1);
+      border: 1px solid var(--color-border); border-radius: 2px; color: var(--color-muted);
+      white-space: nowrap;
+    }
+    .hist-tag.counted { color: var(--color-primary); border-color: var(--color-primary); }
+    .hist-del {
+      border: none; background: none; cursor: pointer; color: var(--color-danger);
+      font-size: 16px; line-height: 1; padding: 0 var(--space-1); opacity: .55; flex-shrink: 0;
+    }
+    .hist-del:hover { opacity: 1; }
+    .empty-hist { font-size: 14px; color: var(--color-muted); }
+
+    .center-meta { font-size: 13px; color: var(--color-muted); margin-top: var(--space-2); }
+    .center-meta .mono { font-family: var(--font-data); font-size: 12px; }
+
+    /* 半年制 H1/H2 雙格迷你狀態 */
+    .half-grid { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+    .half-box {
+      flex: 1; border: 1px solid var(--color-border);
+      padding: var(--space-1) var(--space-2);
+      font-size: 12px; display: flex; justify-content: space-between; align-items: center;
+    }
+    .half-box .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .half-box.s-DONE .dot { background: var(--color-primary); }
+    .half-box.s-PLANNED .dot { background: var(--color-pending); }
+    .half-box.s-PENDING .dot, .half-box.s-OVERDUE .dot { background: var(--color-danger); }
+    .half-box.s-UPCOMING .dot { background: var(--color-border); }
+    .half-box.s-OVERDUE { border-color: var(--color-danger); color: var(--color-danger); }
+
+    /* 觸發事由清單（類型 7） */
+    .trigger-list { margin-top: var(--space-2); border-top: 1px dashed var(--color-border); padding-top: var(--space-2); }
+    .trigger-list li {
+      list-style: none; font-size: 13px;
+      display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap;
+      padding: 2px 0;
+    }
+    .trigger-list .t-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; }
+    .trigger-list .open .t-dot { background: var(--color-danger); }
+    .trigger-list .resolved { color: var(--color-muted); }
+    .trigger-list .resolved .t-dot { background: var(--color-border); }
+    .trigger-list .t-date { font-family: var(--font-data); font-size: 12px; }
+    .trigger-list .t-del {
+      border: none; background: none; cursor: pointer; color: inherit;
+      opacity: .55; font-size: 13px; padding: 0 4px;
+    }
+    .trigger-list .t-del:hover { opacity: 1; }
+
+    /* 紀錄日期 chips（沿用 year-chip 視覺，日期較長） */
+    .date-chip {
+      font-family: var(--font-data); font-size: 12px;
+      padding: 0 var(--space-2);
+      background: var(--color-primary-soft); color: var(--color-primary);
+      border-radius: 2px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+
+    /* ===== 週期總覽列 ===== */
+    .summary-bar {
+      background: var(--color-card);
+      border: 1px solid var(--color-border);
+      margin-top: var(--space-4);
+      padding: var(--space-4);
+      display: grid;
+      grid-template-columns: 1.4fr auto auto;
+      gap: var(--space-4);
+      align-items: center;
+    }
+    @media (max-width: 880px) { .summary-bar { grid-template-columns: 1fr; } }
+
+    .progress-label {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: var(--space-2); font-size: 14px; color: var(--color-muted);
+    }
+    .progress-label strong { color: var(--color-text); font-size: 16px; }
+    .progress-track { height: 10px; background: var(--color-primary-soft); overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--color-primary); width: 0; transition: width .4s ease; }
+    .progress-numbers { font-family: var(--font-data); font-size: 13px; color: var(--color-muted); margin-top: var(--space-1); }
+
+    /* 統計卡片：今年已預計／已稽核 */
+    .stat-cards { display: flex; gap: var(--space-3); }
+    .stat-card {
+      border: 1px solid var(--color-border);
+      padding: var(--space-2) var(--space-3);
+      min-width: 116px; text-align: center;
+    }
+    .stat-card .num { font-family: var(--font-data); font-weight: 600; font-size: 24px; display: block; line-height: 1.3; }
+    .stat-card .label { font-size: 12px; color: var(--color-muted); }
+    .stat-card.planned { border-top: 3px solid var(--color-pending); }
+    .stat-card.planned .num { color: var(--color-pending); }
+    .stat-card.audited { border-top: 3px solid var(--color-primary); }
+    .stat-card.audited .num { color: var(--color-primary); }
+
+    .suggestion-box {
+      border-left: 3px solid var(--color-accent);
+      background: var(--color-accent-soft);
+      padding: var(--space-3) var(--space-4);
+      min-width: 260px;
+    }
+    .suggestion-box .num { font-family: var(--font-data); font-weight: 600; font-size: 22px; color: var(--color-primary); }
+    .suggestion-box .detail { font-size: 13px; color: var(--color-muted); }
+
+    /* ===== 區段標題 ===== */
+    .section-header {
+      display: flex; align-items: baseline; gap: var(--space-2);
+      margin: var(--space-5) 0 var(--space-3);
+      border-bottom: 2px solid var(--color-primary);
+      padding-bottom: var(--space-1);
+    }
+    .section-header h2 { font-family: var(--font-display); font-size: 18px; font-weight: 600; }
+    .section-header .count { font-family: var(--font-data); font-size: 13px; color: var(--color-muted); }
+    .section-header.certified { border-bottom-color: var(--color-accent); }
+    .section-hint { font-size: 13px; color: var(--color-muted); margin-left: auto; }
+
+    /* ===== 駐站卡片 ===== */
+    .station-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-3); }
+
+    .station-card {
+      background: var(--color-card);
+      border: 1px solid var(--color-border);
+      border-left-width: 3px;          /* 簽名元素：左緣狀態色條 */
+      padding: var(--space-3);
+      position: relative;
+      cursor: pointer;                 /* 點擊卡片開啟歷年稽核紀錄 */
+    }
+    .station-card:hover { border-color: var(--color-muted); }
+    .station-card.status-candidate   { border-left-color: var(--color-danger); }
+    .station-card.status-done        { border-left-color: var(--color-primary); }
+    .station-card.status-pending     { border-left-color: var(--color-pending); }
+    .station-card.status-cycle-done  { border-left-color: var(--color-border); }
+    .station-card.is-certified       { border-left-color: var(--color-accent); }
+    .station-card.is-selected        { outline: 2px solid var(--color-primary); outline-offset: -1px; }
+
+    .card-top { display: flex; align-items: flex-start; gap: var(--space-2); }
+    .card-top input[type="checkbox"] {
+      width: 18px; height: 18px; margin-top: 4px;
+      accent-color: var(--color-primary); cursor: pointer; flex-shrink: 0;
+    }
+    .station-code { font-family: var(--font-data); font-size: 12px; color: var(--color-muted); }
+    .station-name { font-weight: 700; font-size: 16px; }
+    .station-manager { font-size: 13px; color: var(--color-muted); }
+
+    /* 稽核履歷行：上次稽核年＋次數；逾期時整行磚紅 */
+    .history-line { font-size: 13px; color: var(--color-muted); }
+    .history-line .mono { font-family: var(--font-data); font-size: 12px; }
+    .history-line.overdue { color: var(--color-danger); font-weight: 500; }
+
+    .badge {
+      font-size: 12px; padding: 1px var(--space-2);
+      border: 1px solid currentColor; border-radius: 2px;
+      white-space: nowrap; margin-left: auto; flex-shrink: 0;
+    }
+    .badge-candidate  { color: var(--color-danger); }
+    .badge-done       { color: var(--color-primary); }
+    .badge-pending    { color: var(--color-pending); background: var(--color-pending-soft); }
+    .badge-draft      { color: var(--color-accent); border-style: dashed; }
+    .badge-cycle-done { color: var(--color-muted); }
+    .badge-certified  {
+      color: var(--color-accent); border-radius: 9999px;
+      margin-left: var(--space-1);
+    }
+
+    .year-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); align-items: center; }
+    .year-chip {
+      font-family: var(--font-data); font-size: 12px;
+      padding: 0 var(--space-2);
+      background: var(--color-primary-soft); color: var(--color-primary);
+      border-radius: 2px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .year-chip.counted { background: var(--color-primary); color: #fff; }
+    .year-chip .chip-del {
+      cursor: pointer; border: none; background: none; color: inherit;
+      font-size: 13px; line-height: 1; padding: 2px;
+      opacity: .55;
+    }
+    .year-chip .chip-del:hover { opacity: 1; }
+    .due-year { font-family: var(--font-data); font-size: 12px; color: var(--color-muted); }
+    .no-history { font-size: 12px; color: var(--color-muted); margin-top: var(--space-2); }
+
+    /* 分派資訊區塊 */
+    .assignment-info {
+      margin-top: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      font-size: 13px;
+      border: 1px solid var(--color-pending-soft);
+      background: var(--color-pending-soft);
+    }
+    .assignment-info.draft { background: var(--color-accent-soft); border: 1px dashed var(--color-accent); }
+    .assignment-info .date { font-family: var(--font-data); font-size: 12px; }
+
+    .card-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+    .btn-sm {
+      font-family: var(--font-body); font-size: 13px;
+      padding: var(--space-1) var(--space-3);
+      border-radius: 4px; cursor: pointer;
+      background: none;
+    }
+    .btn-sm:hover { filter: brightness(0.94); }
+    .btn-assign { border: 1px solid var(--color-pending); color: var(--color-pending); }
+    .btn-edit-draft { border: 1px solid var(--color-accent); color: var(--color-accent); }
+    .btn-remove { border: 1px solid var(--color-border); color: var(--color-muted); }
+    .btn-backfill { border: 1px solid var(--color-border); color: var(--color-muted); }
+
+    /* 週期設定（僅固定模式顯示） */
+    .cycle-settings {
+      font-family: var(--font-body); font-size: 13px;
+      background: none; border: 1px solid rgba(255,255,255,.35); border-radius: 9999px;
+      color: rgba(255,255,255,.85); padding: 2px var(--space-3); cursor: pointer;
+    }
+    .cycle-settings:hover { border-color: rgba(255,255,255,.7); }
+    .modal select {
+      font-family: var(--font-data); font-size: 14px;
+      padding: var(--space-1) var(--space-2);
+      border: 1px solid var(--color-border); border-radius: 2px;
+      background: #fff; color: var(--color-text);
+    }
+    .cycle-preview { font-family: var(--font-data); font-size: 13px; color: var(--color-primary); margin-top: var(--space-2); }
+
+    .members-toggle {
+      background: none; border: none; cursor: pointer;
+      font-family: var(--font-body); font-size: 13px;
+      color: var(--color-primary); text-decoration: underline;
+      margin-top: var(--space-2); padding: 0;
+    }
+    .members-list { margin-top: var(--space-2); border-top: 1px dashed var(--color-border); padding-top: var(--space-2); }
+    .members-list li {
+      list-style: none; font-size: 13px;
+      display: flex; gap: var(--space-2); align-items: baseline;
+    }
+    .members-list .title { color: var(--color-muted); font-size: 12px; }
+
+    /* ===== 底部動作列 ===== */
+    .action-bar {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: var(--color-primary); color: #fff;
+      padding: var(--space-3) 0;
+      transform: translateY(110%);
+      transition: transform .25s ease;
+      z-index: 50;
+    }
+    .action-bar.visible { transform: translateY(0); }
+    .action-bar .container { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+    .action-bar .selected-info { font-size: 14px; }
+    .action-bar select {
+      font-family: var(--font-data); font-size: 14px;
+      padding: var(--space-1) var(--space-2);
+      border: 1px solid rgba(255,255,255,.4); border-radius: 2px;
+      background: var(--color-primary); color: #fff;
+    }
+    .btn {
+      font-family: var(--font-body); font-size: 14px; font-weight: 500;
+      padding: var(--space-2) var(--space-4);
+      border-radius: 4px; border: none; cursor: pointer;
+    }
+    .btn:hover { filter: brightness(0.92); }
+    .btn:disabled { opacity: .6; cursor: default; }
+    .btn-record { background: var(--color-accent); color: #fff; }
+    .btn-submit-plans { background: var(--color-pending); color: #fff; }
+    .btn-ghost  { background: none; border: 1px solid rgba(255,255,255,.4); color: #fff; }
+    .btn-cancel { background: none; border: 1px solid var(--color-border); color: var(--color-text); }
+    .btn-confirm { background: var(--color-primary); color: #fff; }
+    .btn-danger  { background: var(--color-danger); color: #fff; }
+    .bar-spacer { margin-left: auto; display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+    /* ===== Modal ===== */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(28,28,28,.45);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+      padding: var(--space-3);
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--color-card); border-top: 3px solid var(--color-accent);
+      max-width: 480px; width: 100%;
+      display: flex; flex-direction: column; max-height: 80vh;
+    }
+    .modal-header { padding: var(--space-3) var(--space-4); font-family: var(--font-display); font-weight: 600; font-size: 17px; }
+    .modal-body { padding: 0 var(--space-4); overflow-y: auto; max-height: 60vh; font-size: 14px; }
+    .modal-body ul { margin: var(--space-2) 0; padding-left: var(--space-4); }
+    .modal-body li { font-size: 13px; }
+    .modal-body .mono { font-family: var(--font-data); font-size: 12px; color: var(--color-muted); }
+    .modal-footer {
+      padding: var(--space-3) var(--space-4);
+      display: flex; justify-content: flex-end; gap: var(--space-2);
+      flex-shrink: 0;
+    }
+
+    /* 分派表單 */
+    .auditor-list {
+      border: 1px solid var(--color-border);
+      max-height: 200px; overflow-y: auto;
+      margin: var(--space-2) 0;
+    }
+    .auditor-list label {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-2) var(--space-3); cursor: pointer;
+      border-bottom: 1px solid var(--color-primary-soft);
+      font-size: 14px;
+    }
+    .auditor-list label:last-child { border-bottom: none; }
+    .auditor-list input { accent-color: var(--color-pending); width: 16px; height: 16px; }
+    .auditor-list .email { font-family: var(--font-data); font-size: 11px; color: var(--color-muted); margin-left: auto; }
+    .form-row { margin: var(--space-3) 0; }
+    .form-row label { font-size: 13px; color: var(--color-muted); display: block; margin-bottom: var(--space-1); }
+    .form-row input[type="date"] {
+      font-family: var(--font-data); font-size: 14px;
+      padding: var(--space-1) var(--space-2);
+      border: 1px solid var(--color-border); border-radius: 2px;
+      background: #fff; color: var(--color-text);
+    }
+    .form-error { font-size: 13px; color: var(--color-danger); min-height: 20px; }
+    .period-hint { font-size: 12px; color: var(--color-muted); margin-top: var(--space-1); min-height: 18px; }
+    .period-hint .warn { color: var(--color-danger); }
+
+    /* ===== 劇場式進度 overlay ===== */
+    .progress-overlay {
+      position: fixed; inset: 0; background: rgba(28,28,28,.55);
+      display: none; align-items: center; justify-content: center; z-index: 150;
+      padding: var(--space-3);
+    }
+    .progress-overlay.open { display: flex; }
+    .progress-card {
+      background: var(--color-card); border-top: 3px solid var(--color-pending);
+      width: 100%; max-width: 420px;
+      padding: var(--space-4) var(--space-5) var(--space-5);
+    }
+    .progress-card .title { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin-bottom: var(--space-3); }
+    .progress-track-lg { height: 12px; background: var(--color-pending-soft); overflow: hidden; }
+    .progress-fill-lg {
+      height: 100%; width: 0; background: var(--color-pending);
+      transition: width .22s linear;
+    }
+    .progress-fill-lg.success { background: var(--color-primary); }
+    .progress-fill-lg.error { background: var(--color-danger); }
+    .progress-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: var(--space-2); }
+    .progress-stage { font-size: 13px; color: var(--color-muted); }
+    .progress-stage.error { color: var(--color-danger); }
+    .progress-percent { font-family: var(--font-data); font-size: 13px; color: var(--color-pending); }
+    .progress-close-row { text-align: right; margin-top: var(--space-3); }
+
+    /* ===== Toast / Loading / 空狀態 ===== */
+    .toast {
+      position: fixed; top: var(--space-3); left: 50%; transform: translateX(-50%) translateY(-200%);
+      background: var(--color-primary); color: #fff;
+      padding: var(--space-2) var(--space-4); font-size: 14px;
+      border-radius: 4px; z-index: 200;
+      transition: transform .25s ease;
+      max-width: 90vw;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.error { background: var(--color-danger); }
+
+    .loading-overlay {
+      position: fixed; inset: 0; background: var(--color-surface);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: var(--space-3); z-index: 300;
+    }
+    .loading-overlay.hidden { display: none; }
+    .loading-seal {
+      width: 48px; height: 48px;
+      border: 3px solid var(--color-primary-soft);
+      border-top-color: var(--color-accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-size: 14px; color: var(--color-muted); }
+
+    .error-state, .empty-state {
+      background: var(--color-card); border: 1px solid var(--color-border);
+      padding: var(--space-5); text-align: center;
+      margin-top: var(--space-4); font-size: 14px;
+    }
+    .error-state { border-left: 3px solid var(--color-danger); }
+    .error-state .btn { margin-top: var(--space-3); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .progress-fill, .action-bar, .toast, .progress-fill-lg { transition: none; }
+      .loading-seal { animation-duration: 2s; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="container">
+      <div class="app-title">稽核駐站分配</div>
+      <div class="app-cycle" id="cycle-tag">—</div>
+      <button class="cycle-settings hidden" id="btn-cycle-settings">⚙ 週期設定</button>
+      <div class="mode-switch" id="mode-switch">
+        <button data-mode="FIXED">固定三年區段</button>
+        <button data-mode="ROLLING">滾動三年</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tab-bar">
+    <div class="container">
+      <button class="tab active" data-tab="station">駐站收案稽核</button>
+      <button class="tab" data-tab="center">中心稽核項目</button>
+    </div>
+  </nav>
+
+  <main class="container">
+    <div id="view-station">
+      <div id="summary-root"></div>
+      <div class="data-tools">
+        <span class="data-tools-label">駐站稽核紀錄</span>
+        <button class="btn-sm btn-tool" data-export="station" data-format="csv">匯出 CSV</button>
+        <button class="btn-sm btn-tool" data-export="station" data-format="xlsx">匯出 Excel</button>
+        <button class="btn-sm btn-tool" data-import="station">匯入 CSV</button>
+      </div>
+      <div id="content-root"></div>
+    </div>
+    <div id="view-center" class="hidden">
+      <div id="center-summary-root"></div>
+      <div class="data-tools">
+        <span class="data-tools-label">中心稽核紀錄</span>
+        <button class="btn-sm btn-tool" data-export="center" data-format="csv">匯出 CSV</button>
+        <button class="btn-sm btn-tool" data-export="center" data-format="xlsx">匯出 Excel</button>
+        <button class="btn-sm btn-tool" data-import="center">匯入 CSV</button>
+      </div>
+      <div id="center-content-root"></div>
+    </div>
+  </main>
+
+  <!-- 匯入用隱藏檔案選擇器 -->
+  <input type="file" id="import-file" accept=".csv,text/csv" style="display:none">
+
+  <!-- 歷年稽核紀錄彈窗（駐站／中心共用） -->
+  <div class="modal-overlay history-overlay" id="history-overlay">
+    <div class="modal">
+      <div class="modal-header" id="history-title"></div>
+      <div class="modal-body" id="history-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="history-close">關閉</button>
+        <button class="btn btn-confirm" id="history-backfill">補登紀錄</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部動作列：有勾選或待送出草稿時滑出 -->
+  <div class="action-bar" id="action-bar">
+    <div class="container">
+      <span class="selected-info" id="selected-info"></span>
+      <label id="year-select-wrap">稽核年度
+        <select id="year-select"></select>
+      </label>
+      <div class="bar-spacer">
+        <button class="btn btn-ghost" id="btn-clear">清除勾選</button>
+        <button class="btn btn-record" id="btn-record">登錄稽核紀錄</button>
+        <button class="btn btn-submit-plans" id="btn-submit-plans">送出確定分派</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 確認 Modal -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header" id="modal-title"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="modal-cancel">取消</button>
+        <button class="btn btn-confirm" id="modal-confirm"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 分派 Modal -->
+  <div class="modal-overlay" id="assign-overlay">
+    <div class="modal">
+      <div class="modal-header" id="assign-title"></div>
+      <div class="modal-body">
+        <p>勾選稽核人員（可複選），並選擇預計稽核日期。</p>
+        <div class="auditor-list" id="auditor-list"></div>
+        <div class="form-row">
+          <label for="assign-date">預計稽核日期</label>
+          <input type="date" id="assign-date">
+        </div>
+        <div class="form-error" id="assign-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="assign-cancel">取消</button>
+        <button class="btn btn-confirm" id="assign-save">儲存為待送出</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 中心稽核 排定／登錄 Modal（兩種模式共用一個表單骨架） -->
+  <div class="modal-overlay" id="center-form-overlay">
+    <div class="modal">
+      <div class="modal-header" id="center-form-title"></div>
+      <div class="modal-body">
+        <p id="center-form-hint"></p>
+        <div class="form-row">
+          <label for="center-form-date" id="center-form-date-label">日期</label>
+          <input type="date" id="center-form-date">
+          <div class="period-hint" id="center-form-period-hint"></div>
+        </div>
+        <div class="form-row">
+          <label id="center-form-auditor-label">稽核人員（可複選）</label>
+          <div class="auditor-list" id="center-auditor-list"></div>
+        </div>
+        <div class="form-row" id="center-form-reason-row">
+          <label for="center-form-reason">事由說明</label>
+          <input type="text" id="center-form-reason" style="width:100%;font-family:var(--font-body);font-size:14px;padding:var(--space-1) var(--space-2);border:1px solid var(--color-border);border-radius:2px;">
+        </div>
+        <div class="form-error" id="center-form-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="center-form-cancel">取消</button>
+        <button class="btn btn-confirm" id="center-form-save"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 登記觸發事由 Modal（類型 7） -->
+  <div class="modal-overlay" id="trigger-overlay">
+    <div class="modal">
+      <div class="modal-header">登記觸發事由 — 組織與人員</div>
+      <div class="modal-body">
+        <p>設置許可展延、變更、倫理委員會組成或資料庫人員異動時，在此登記後即產生待辦稽核。</p>
+        <div class="form-row">
+          <label for="trigger-date">事件日期</label>
+          <input type="date" id="trigger-date">
+        </div>
+        <div class="form-row">
+          <label for="trigger-category">事由類別</label>
+          <select id="trigger-category"></select>
+        </div>
+        <div class="form-row">
+          <label for="trigger-desc">說明（選填）</label>
+          <input type="text" id="trigger-desc" style="width:100%;font-family:var(--font-body);font-size:14px;padding:var(--space-1) var(--space-2);border:1px solid var(--color-border);border-radius:2px;">
+        </div>
+        <div class="form-error" id="trigger-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="trigger-cancel">取消</button>
+        <button class="btn btn-confirm" id="trigger-save">登記事由</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 補登歷史紀錄 Modal -->
+  <div class="modal-overlay" id="backfill-overlay">
+    <div class="modal">
+      <div class="modal-header" id="backfill-title"></div>
+      <div class="modal-body">
+        <p>選擇實際稽核日期（同一駐站每年僅計一筆，已有紀錄的年度無法補登）。</p>
+        <div class="form-row">
+          <label for="backfill-date">稽核日期</label>
+          <input type="date" id="backfill-date">
+          <div class="period-hint" id="backfill-hint"></div>
+        </div>
+        <div class="form-error" id="backfill-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="backfill-cancel">取消</button>
+        <button class="btn btn-confirm" id="backfill-save">補登此筆紀錄</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 劇場式進度 overlay -->
+  <div class="progress-overlay" id="progress-overlay">
+    <div class="progress-card">
+      <div class="title">送出稽核分派</div>
+      <div class="progress-track-lg"><div class="progress-fill-lg" id="theatrical-fill"></div></div>
+      <div class="progress-meta">
+        <span class="progress-stage" id="theatrical-stage">正在準備資料…</span>
+        <span class="progress-percent" id="theatrical-percent">0%</span>
+      </div>
+      <div class="progress-close-row hidden" id="progress-close-row">
+        <button class="btn btn-cancel" id="progress-close">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="loading-overlay" id="loading">
+    <div class="loading-seal"></div>
+    <div class="loading-text">正在讀取駐站與稽核紀錄……</div>
+  </div>
+
+  <script>
+    // 本機預覽（無 GAS 環境）時載入真實的週期邏輯，讓 mock 與後端共用同一套純函式；
+    // GAS 部署環境不會執行此行，邏輯一律走後端。
+    // 加上時間戳避免瀏覽器快取舊版邏輯檔；CenterAudit 依賴 AuditCycle，順序載入。
+    if (typeof google === 'undefined') {
+      document.write('<script src="AuditCycle.js?v=' + Date.now() + '"><\/script>');
+      document.write('<script src="CenterAudit.js?v=' + Date.now() + '"><\/script>');
+      document.write('<script src="CsvUtil.js?v=' + Date.now() + '"><\/script>');
+    }
+  </script>
+  <script>
+    'use strict';
+
+    // =============================================
+    // 狀態
+    // =============================================
+    let dashboard = null;            // 後端回傳的完整資料
+    let currentTab = 'station';      // 'station' | 'center'
+    const selectedCodes = new Set(); // 勾選中的駐站代碼（登錄稽核用）
+    const expandedCodes = new Set(); // 成員名單展開中的駐站（重繪後保留）
+    const drafts = new Map();        // 待送出的分派草稿：code → {auditorEmails, auditorNames, plannedDate}
+
+    const MODE_LABELS = {
+      FIXED:   { cycleDone: '本週期已完成', progressTitle: '週期覆蓋進度' },
+      ROLLING: { cycleDone: '效期內',       progressTitle: '三年效期覆蓋' },
+    };
+
+    // =============================================
+    // 後端通訊（本機開發時自動退回假資料）
+    // =============================================
+    function callServer(fnName) {
+      const args = Array.prototype.slice.call(arguments, 1);
+      if (typeof google === 'undefined' || !google.script) {
+        return mockServer(fnName, args); // 本機預覽：直接開啟 index.html 時走假資料
+      }
+      return new Promise(function (resolve, reject) {
+        google.script.run
+          .withSuccessHandler(function (json) {
+            const res = JSON.parse(json);
+            res.ok ? resolve(res.data) : reject(new Error(res.error));
+          })
+          .withFailureHandler(function (err) { reject(err); })
+          [fnName].apply(null, args);
+      });
+    }
+
+    // =============================================
+    // 工具
+    // =============================================
+    function escapeHtml(str) {
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /** UTF-8 字串 → base64（btoa 無法直接處理多位元組字元，先轉 byte）；供預覽 mock 匯出用 */
+    function utf8ToBase64_(str) {
+      const bytes = new TextEncoder().encode(str);
+      let binary = '';
+      bytes.forEach(function (b) { binary += String.fromCharCode(b); });
+      return btoa(binary);
+    }
+
+    function showToast(message, isError) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast show' + (isError ? ' error' : '');
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(function () { toast.className = 'toast'; }, 3600);
+    }
+
+    // =============================================
+    // 載入與渲染
+    // =============================================
+    function loadDashboard() {
+      document.getElementById('loading').classList.remove('hidden');
+      callServer('getAuditDashboard')
+        .then(function (data) {
+          dashboard = data;
+          pruneStaleSelections_();
+          renderAll();
+          refreshHistoryBody_(); // 歷年彈窗開著時，以最新資料更新清單
+        })
+        .catch(function (err) { renderError(err.message); })
+        .finally(function () { document.getElementById('loading').classList.add('hidden'); });
+    }
+
+    /** 重載後清掉已不存在或已不適用的勾選與草稿 */
+    function pruneStaleSelections_() {
+      const byCode = {};
+      allStations().forEach(s => { byCode[s.code] = s; });
+      Array.from(selectedCodes).forEach(function (code) {
+        if (!byCode[code] || !isSelectable(byCode[code])) selectedCodes.delete(code);
+      });
+      // 草稿只對「今年候選」有效：送出成功或已被登錄稽核後自動移除
+      Array.from(drafts.keys()).forEach(function (code) {
+        if (!byCode[code] || byCode[code].evaluation.status !== 'CANDIDATE') drafts.delete(code);
+      });
+    }
+
+    function allStations() {
+      return dashboard.certifiedStations.concat(dashboard.normalStations);
+    }
+
+    // 勾選資格集中判定：篩選、渲染、批次登錄共用
+    function isSelectable(station) {
+      return !station.evaluation.auditedThisYear;
+    }
+
+    function renderAll() {
+      const isRolling = dashboard.mode === 'ROLLING';
+      document.getElementById('cycle-tag').textContent = isRolling
+        ? '滾動式三年　·　' + dashboard.currentYear + ' 年度'
+        : dashboard.cycle.start + '–' + dashboard.cycle.end + ' 週期　·　' + dashboard.currentYear + ' 年度';
+      document.getElementById('mode-switch').querySelectorAll('button').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.mode === dashboard.mode);
+      });
+      // 起始年設定只對固定模式有意義，滾動模式時隱藏
+      document.getElementById('btn-cycle-settings').classList.toggle('hidden', isRolling);
+      renderSummary();
+      renderSections();
+      renderCenter();
+      renderYearOptions();
+      updateActionBar();
+    }
+
+    // =============================================
+    // 分頁切換
+    // =============================================
+    document.querySelectorAll('.tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        currentTab = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.getElementById('view-station').classList.toggle('hidden', currentTab !== 'station');
+        document.getElementById('view-center').classList.toggle('hidden', currentTab !== 'center');
+        updateActionBar(); // 駐站動作列只在駐站分頁顯示
+      });
+    });
+
+    function renderSummary() {
+      const s = dashboard.summary;
+      const isRolling = dashboard.mode === 'ROLLING';
+      const labels = MODE_LABELS[dashboard.mode];
+      const scopeText = isRolling
+        ? '效期內 ' + s.countedInCycle + ' / ' + s.totalStations + ' 間　·　今年到期待稽 ' + s.remainingNormal + ' 間'
+        : '已計入 ' + s.countedInCycle + ' / ' + s.totalStations + ' 間　·　一般駐站待稽 ' + s.remainingNormal + ' 間　·　週期剩餘 ' + s.remainingYears + ' 年';
+
+      document.getElementById('summary-root').innerHTML =
+        '<div class="summary-bar">' +
+          '<div>' +
+            '<div class="progress-label">' +
+              '<span><strong>' + labels.progressTitle + '</strong>' +
+                (isRolling ? '' : '（' + dashboard.cycle.start + '–' + dashboard.cycle.end + '）') + '</span>' +
+              '<span>' + s.coveragePercent + '%</span>' +
+            '</div>' +
+            '<div class="progress-track"><div class="progress-fill" style="width:' + s.coveragePercent + '%"></div></div>' +
+            '<div class="progress-numbers">' + scopeText + '</div>' +
+          '</div>' +
+          '<div class="stat-cards">' +
+            '<div class="stat-card planned"><span class="num">' + s.plannedThisYear + '</span><span class="label">今年已預計稽核</span></div>' +
+            '<div class="stat-card audited"><span class="num">' + s.auditedThisYear + '</span><span class="label">今年已稽核</span></div>' +
+          '</div>' +
+          '<div class="suggestion-box">' +
+            '<div>今年建議稽核 <span class="num">' + s.suggestedTotal + '</span> 間</div>' +
+            '<div class="detail">一般駐站 ' + s.suggestedNormal + ' 間 ＋ 認證駐站 ' + s.certifiedPendingThisYear + ' 間（年度必稽）</div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function renderSections() {
+      const root = document.getElementById('content-root');
+      if (allStations().length === 0) {
+        root.innerHTML =
+          '<div class="empty-state">尚未讀取到任何駐站。請確認 env.js 已填入 HR 試算表 ID，' +
+          '且「組織架構樹」中有代碼為 GRP-CO- 開頭的節點。</div>';
+        return;
+      }
+      const normalHint = dashboard.mode === 'ROLLING' ? '上次稽核後滿三年到期' : '三年週期內稽核一次';
+      root.innerHTML =
+        buildSection('認證駐站', 'certified', dashboard.certifiedStations, '每年必稽，僅第一年計入週期') +
+        buildSection('一般駐站', 'normal', dashboard.normalStations, normalHint);
+      bindCardEvents();
+    }
+
+    function buildSection(title, kind, stations, hint) {
+      return (
+        '<div class="section-header ' + kind + '">' +
+          '<h2>' + title + '</h2>' +
+          '<span class="count">' + stations.length + ' 間</span>' +
+          '<span class="section-hint">' + hint + '</span>' +
+        '</div>' +
+        '<div class="station-grid">' + stations.map(buildStationCard).join('') + '</div>'
+      );
+    }
+
+    function statusBadge_(station) {
+      const map = {
+        AUDITED_THIS_YEAR: { label: '今年已稽核', cls: 'badge-done',    card: 'status-done' },
+        PENDING_AUDIT:     { label: '待稽核',     cls: 'badge-pending', card: 'status-pending' },
+        CANDIDATE:         { label: '今年候選',   cls: 'badge-candidate', card: 'status-candidate' },
+        CYCLE_DONE:        { label: MODE_LABELS[dashboard.mode].cycleDone, cls: 'badge-cycle-done', card: 'status-cycle-done' },
+      };
+      return map[station.evaluation.status] || map.CANDIDATE;
+    }
+
+    function buildStationCard(station) {
+      const ev = station.evaluation;
+      const badge = statusBadge_(station);
+      const selectable = isSelectable(station);
+      const draft = drafts.get(station.code) || null;
+      const cardClasses = ['station-card', badge.card];
+      if (station.isCertified) cardClasses.push('is-certified');
+      if (selectedCodes.has(station.code)) cardClasses.push('is-selected');
+
+      // 滾動模式：一般駐站顯示下次到期年
+      const dueText = (dashboard.mode === 'ROLLING' && !station.isCertified && ev.dueYear)
+        ? '<span class="due-year">到期 ' + ev.dueYear + '</span>' : '';
+
+      // 稽核履歷行：上次稽核年＋累計次數；逾期（從未稽核或滿三年）整行磚紅警示
+      const history = station.history;
+      let historyLine;
+      if (history.auditCount === 0) {
+        historyLine = '<div class="history-line overdue">⚠ 從未稽核</div>';
+      } else {
+        // lastAuditDisplay：有完整日期顯示 yyyy/MM/dd，早期僅年度的紀錄退回「YYYY 年」
+        const base = '上次稽核：<span class="mono">' + escapeHtml(station.lastAuditDisplay) + '</span>（共 ' + history.auditCount + ' 次）';
+        historyLine = history.isOverdue
+          ? '<div class="history-line overdue">' + base + '　⚠ 已超過三年未稽核</div>'
+          : '<div class="history-line">' + base + '</div>';
+      }
+
+      // 紀錄明細已移至歷年紀錄彈窗（點擊卡片開啟）；卡片僅保留滾動模式到期年提示
+      const dueLine = dueText ? '<div class="history-line">' + dueText + '</div>' : '';
+
+      // 分派區塊：已送出（待稽核）> 草稿（待送出）> 可分派按鈕；
+      // 「補登紀錄」不限狀態，所有卡片皆可補登歷史
+      let assignmentInfoHtml = '';
+      const actionButtons = [];
+      if (station.assignment) {
+        assignmentInfoHtml =
+          '<div class="assignment-info">' +
+            '稽核人員：' + escapeHtml(station.assignment.auditorNames) +
+            '　<span class="date">' + escapeHtml(station.assignment.plannedDate) + '</span>' +
+          '</div>';
+        actionButtons.push('<button class="btn-sm btn-remove" data-action="cancel-assignment" data-code="' + escapeHtml(station.code) + '">取消分派</button>');
+      } else if (draft) {
+        assignmentInfoHtml =
+          '<div class="assignment-info draft">' +
+            '<span class="badge badge-draft">待送出</span>　' +
+            escapeHtml(draft.auditorNames.join('、')) +
+            '　<span class="date">' + escapeHtml(draft.plannedDate) + '</span>' +
+          '</div>';
+        actionButtons.push('<button class="btn-sm btn-edit-draft" data-action="assign" data-code="' + escapeHtml(station.code) + '">修改</button>');
+        actionButtons.push('<button class="btn-sm btn-remove" data-action="remove-draft" data-code="' + escapeHtml(station.code) + '">移除草稿</button>');
+      } else if (ev.status === 'CANDIDATE') {
+        actionButtons.push('<button class="btn-sm btn-assign" data-action="assign" data-code="' + escapeHtml(station.code) + '">分派稽核</button>');
+      }
+      actionButtons.push('<button class="btn-sm btn-backfill" data-action="backfill" data-code="' + escapeHtml(station.code) + '">補登紀錄</button>');
+      const assignmentHtml = assignmentInfoHtml + '<div class="card-actions">' + actionButtons.join('') + '</div>';
+
+      const expanded = expandedCodes.has(station.code);
+      const membersHtml = expanded
+        ? '<ul class="members-list">' + (station.members.length === 0
+            ? '<li class="title">此駐站在人員職務配置中沒有成員資料</li>'
+            : station.members.map(function (m) {
+                return '<li><span>' + escapeHtml(m.name) + '</span><span class="title">' + escapeHtml(m.title) + '</span></li>';
+              }).join('')) + '</ul>'
+        : '';
+
+      return (
+        '<div class="' + cardClasses.join(' ') + '" data-code="' + escapeHtml(station.code) + '">' +
+          '<div class="card-top">' +
+            (selectable
+              ? '<input type="checkbox" data-action="select" data-code="' + escapeHtml(station.code) + '"' +
+                (selectedCodes.has(station.code) ? ' checked' : '') + ' aria-label="勾選 ' + escapeHtml(station.name) + '">'
+              : '') +
+            '<div>' +
+              '<div class="station-code">' + escapeHtml(station.code) + '</div>' +
+              '<div class="station-name">' + escapeHtml(station.name) +
+                (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '') + '</div>' +
+              '<div class="station-manager">負責人：' + escapeHtml(station.managerName || '未設定') + '</div>' +
+              historyLine +
+            '</div>' +
+            '<span class="badge ' + badge.cls + '">' + badge.label + '</span>' +
+          '</div>' +
+          dueLine +
+          assignmentHtml +
+          '<button class="members-toggle" data-action="toggle-members" data-code="' + escapeHtml(station.code) + '">' +
+            (expanded ? '收合成員名單' : '成員 ' + station.members.length + ' 人') + '</button>' +
+          membersHtml +
+        '</div>'
+      );
+    }
+
+    function bindCardEvents() {
+      document.getElementById('content-root').querySelectorAll('[data-action]').forEach(function (el) {
+        const action = el.dataset.action;
+        const code = el.dataset.code;
+        if (action === 'select') {
+          el.addEventListener('change', function () {
+            el.checked ? selectedCodes.add(code) : selectedCodes.delete(code);
+            el.closest('.station-card').classList.toggle('is-selected', el.checked);
+            updateActionBar();
+          });
+        } else if (action === 'toggle-members') {
+          el.addEventListener('click', function () {
+            expandedCodes.has(code) ? expandedCodes.delete(code) : expandedCodes.add(code);
+            renderSections();
+          });
+        } else if (action === 'delete') {
+          el.addEventListener('click', function () {
+            confirmDeleteRecord(code, Number(el.dataset.year));
+          });
+        } else if (action === 'assign') {
+          el.addEventListener('click', function () { openAssignModal(code); });
+        } else if (action === 'backfill') {
+          el.addEventListener('click', function () { openBackfillModal(code); });
+        } else if (action === 'remove-draft') {
+          el.addEventListener('click', function () {
+            drafts.delete(code);
+            renderSections();
+            updateActionBar();
+          });
+        } else if (action === 'cancel-assignment') {
+          el.addEventListener('click', function () { confirmCancelAssignment(code); });
+        }
+      });
+
+      // 點擊卡片任意非互動區域 → 開啟歷年稽核紀錄
+      document.getElementById('content-root').querySelectorAll('.station-card').forEach(function (card) {
+        card.addEventListener('click', function (e) {
+          if (e.target.closest('input, button, label, .members-toggle')) return;
+          openHistoryModal('station', card.dataset.code);
+        });
+      });
+    }
+
+    function renderError(message) {
+      document.getElementById('content-root').innerHTML =
+        '<div class="error-state">' +
+          '<div><strong>資料載入失敗</strong></div>' +
+          '<div>' + escapeHtml(message) + '</div>' +
+          '<button class="btn btn-confirm" onclick="loadDashboard()">重新載入</button>' +
+        '</div>';
+      document.getElementById('summary-root').innerHTML = '';
+    }
+
+    // =============================================
+    // 中心稽核項目頁（類型 2～8）
+    // =============================================
+    const CENTER_BADGE_MAP = {
+      DONE:     { label: '本期已完成',     cls: 'badge-done',       card: 'status-done' },
+      PLANNED:  { label: '待稽核・已排定', cls: 'badge-pending',    card: 'status-planned' },
+      PENDING:  { label: '待排定',         cls: 'badge-candidate',  card: 'status-pending' },
+      OVERDUE:  { label: '逾期未稽核',     cls: 'badge-candidate',  card: 'status-overdue' },
+      NONE:     { label: '無待辦',         cls: 'badge-cycle-done', card: 'status-none' },
+    };
+    const HALF_STATUS_LABELS = {
+      DONE: '已完成', PLANNED: '已排定', PENDING: '待稽核', OVERDUE: '逾期', UPCOMING: '未到期',
+    };
+    const FREQ_CHIP_CLS = {
+      TRIENNIAL: 'freq-triennial', HALF_YEAR: 'freq-half', FOUR_MONTH: 'freq-half', YEARLY: 'freq-yearly',
+      EVENT: 'freq-event', ADHOC: 'freq-adhoc',
+    };
+
+    function renderCenter() {
+      const s = dashboard.centerSummary;
+      document.getElementById('center-summary-root').innerHTML =
+        '<div class="summary-bar" style="grid-template-columns:1fr">' +
+          '<div class="stat-cards" style="flex-wrap:wrap">' +
+            '<div class="stat-card"><span class="num">' + s.dueThisYear + '</span><span class="label">今年應稽（人次）</span></div>' +
+            '<div class="stat-card audited"><span class="num">' + s.doneThisYear + '</span><span class="label">今年已完成</span></div>' +
+            '<div class="stat-card planned"><span class="num">' + s.plannedCount + '</span><span class="label">已排定待稽</span></div>' +
+            '<div class="stat-card" style="border-top:3px solid var(--color-danger)"><span class="num" style="color:var(--color-danger)">' + s.overdueOrTodoCount + '</span><span class="label">逾期／待辦</span></div>' +
+          '</div>' +
+        '</div>';
+
+      document.getElementById('center-content-root').innerHTML =
+        '<div class="center-grid">' +
+        dashboard.centerTypes.slice().sort((a, b) => a.order - b.order).map(buildCenterCard).join('') +
+        '</div>';
+      bindCenterEvents();
+    }
+
+    function buildCenterCard(type) {
+      const ev = type.evaluation;
+      const badge = CENTER_BADGE_MAP[ev.status] || CENTER_BADGE_MAP.PENDING;
+
+      // 半年制：H1/H2 雙格迷你狀態
+      const halfGrid = !ev.periodsThisYear ? '' :
+        '<div class="half-grid">' + ev.periodsThisYear.map(function (p) {
+          return '<div class="half-box s-' + p.status + '"><span><span class="dot"></span>' + p.label + '</span>' +
+            '<span>' + (HALF_STATUS_LABELS[p.status] || p.status) + '</span></div>';
+        }).join('') + '</div>';
+
+      const lastLine = ev.lastAuditDate
+        ? '上次稽核：<span class="mono">' + escapeHtml(ev.lastAuditDate) + '</span>（共 ' + ev.auditCount + ' 次）'
+        : '尚無稽核紀錄';
+      const missedWarn = ev.prevPeriodMissed ? '<span style="color:var(--color-danger)">　⚠ 上期未稽核</span>' : '';
+
+      // 排程資訊
+      const planHtml = !type.plan ? '' :
+        '<div class="assignment-info">排定 <span class="date">' + escapeHtml(type.plan.plannedDate) + '</span>　' +
+          escapeHtml(type.plan.auditorNames) +
+          (type.plan.reason ? '　<span class="date">' + escapeHtml(type.plan.reason) + '</span>' : '') +
+        '</div>';
+
+      // 觸發事由清單（類型 7）
+      let triggerHtml = '';
+      if (type.id === 'ORG') {
+        const items = (type.triggers || []).map(function (t) {
+          return '<li class="' + (t.resolved ? 'resolved' : 'open') + '">' +
+            '<span class="t-dot"></span>' +
+            '<span class="t-date">' + escapeHtml(t.eventDate) + '</span>' +
+            '<span>' + escapeHtml(t.category) + (t.description ? '：' + escapeHtml(t.description) : '') + '</span>' +
+            (t.resolved
+              ? '<span class="t-date">✓ ' + escapeHtml(t.resolvedBy) + ' 已稽核</span>'
+              : '<button class="t-del" data-action="del-trigger" data-id="' + escapeHtml(t.eventId) + '" title="刪除此事由">×</button>') +
+          '</li>';
+        }).join('');
+        triggerHtml = '<ul class="trigger-list">' +
+          (items || '<li class="resolved">尚無觸發事由——有展延、變更或人員異動時在此登記</li>') + '</ul>';
+      }
+
+      // 紀錄明細已移至歷年紀錄彈窗（點擊卡片開啟）；卡片僅顯示「共 N 筆」摘要
+      const recordSummary = type.records.length > 0
+        ? '<div class="center-meta record-hint">歷年紀錄 ' + type.records.length + ' 筆 · 點擊查看</div>'
+        : '';
+
+      // 動作按鈕
+      const actions = [];
+      if (type.plan) {
+        actions.push('<button class="btn-sm btn-edit-draft" data-action="plan-center" data-type="' + type.id + '">重新排定</button>');
+        actions.push('<button class="btn-sm btn-remove" data-action="cancel-center-plan" data-type="' + type.id + '">取消排定</button>');
+      } else {
+        actions.push('<button class="btn-sm btn-assign" data-action="plan-center" data-type="' + type.id + '">排定稽核</button>');
+      }
+      actions.push('<button class="btn-sm btn-backfill" data-action="record-center" data-type="' + type.id + '">登錄完成／補登</button>');
+      if (type.id === 'ORG') {
+        actions.push('<button class="btn-sm btn-edit-draft" data-action="add-trigger">登記觸發事由</button>');
+      }
+
+      return (
+        '<div class="center-card ' + badge.card + '" data-type="' + type.id + '">' +
+          '<div class="card-head">' +
+            '<div>' +
+              '<div class="type-order">類型 ' + type.order + '</div>' +
+              '<div class="type-name">' + escapeHtml(type.name) + ' <span class="freq-chip ' + (FREQ_CHIP_CLS[type.frequency] || '') + '"' +
+                eraTooltip_(type) + '>' + escapeHtml(type.freqLabel) + '</span></div>' +
+            '</div>' +
+            '<span class="badge ' + badge.cls + '" style="margin-left:auto">' + badge.label + '</span>' +
+          '</div>' +
+          '<div class="center-meta">本期：' + escapeHtml(ev.currentPeriodLabel) + '　·　期限：' + escapeHtml(ev.nextDueLabel) + '</div>' +
+          '<div class="center-meta">' + lastLine + missedWarn + '</div>' +
+          halfGrid +
+          planHtml +
+          triggerHtml +
+          recordSummary +
+          '<div class="card-actions">' + actions.join('') + '</div>' +
+        '</div>'
+      );
+    }
+
+    function bindCenterEvents() {
+      document.getElementById('center-content-root').querySelectorAll('[data-action]').forEach(function (el) {
+        const action = el.dataset.action;
+        if (action === 'plan-center') {
+          el.addEventListener('click', function () { openCenterForm('plan', el.dataset.type); });
+        } else if (action === 'record-center') {
+          el.addEventListener('click', function () { openCenterForm('record', el.dataset.type); });
+        } else if (action === 'cancel-center-plan') {
+          el.addEventListener('click', function () { confirmCancelCenterPlan(el.dataset.type); });
+        } else if (action === 'del-center-record') {
+          el.addEventListener('click', function () { confirmDeleteCenterRecord(el.dataset.type, el.dataset.date); });
+        } else if (action === 'add-trigger') {
+          el.addEventListener('click', openTriggerModal);
+        } else if (action === 'del-trigger') {
+          el.addEventListener('click', function () { confirmDeleteTrigger(el.dataset.id); });
+        }
+      });
+
+      // 點擊卡片任意非互動區域 → 開啟該類型歷年稽核紀錄
+      document.getElementById('center-content-root').querySelectorAll('.center-card').forEach(function (card) {
+        card.addEventListener('click', function (e) {
+          if (e.target.closest('button, input, label, a, .t-del')) return;
+          openHistoryModal('center', card.dataset.type);
+        });
+      });
+    }
+
+    // ---- 期別歸屬（分段制類型；規則資料由後端 segmentSchedule 下發） ----
+    const FREQ_DISPLAY_NAMES = { FOUR_MONTH: '每四個月', HALF_YEAR: '每半年' };
+
+    /** 頻率有年代變更的類型，chip 加 tooltip 說明（如：2024 年起每四個月；更早每半年） */
+    function eraTooltip_(type) {
+      const schedule = type.segmentSchedule;
+      if (!schedule || schedule.length < 2) return '';
+      const text = schedule.map(function (era) {
+        return (era.fromYear ? era.fromYear + ' 年起' : '更早年度') + (FREQ_DISPLAY_NAMES[era.frequency] || era.frequency);
+      }).join('；');
+      return ' title="' + escapeHtml(text) + '"';
+    }
+
+    /**
+     * 計算日期（yyyy/MM/dd）在該類型「當時制度」下的期別歸屬。
+     * @returns {{label, isLegacyEra, from, to, year}|null}
+     */
+    function periodInfoForDate_(type, dateText) {
+      const schedule = type.segmentSchedule;
+      if (!schedule) return null;
+      const year = Number(dateText.slice(0, 4));
+      const month = Number(dateText.slice(5, 7));
+      if (!year || !month) return null;
+      const era = schedule.find(e => e.fromYear === null || year >= e.fromYear);
+      if (!era) return null;
+      const seg = era.segments.find(s => month >= s.from && month <= s.to);
+      if (!seg) return null;
+      return {
+        label: year + ' 年' + seg.label,
+        isLegacyEra: era.frequency !== type.frequency,
+        eraFreqName: FREQ_DISPLAY_NAMES[era.frequency] || era.frequency,
+        from: seg.from, to: seg.to, year: year,
+      };
+    }
+
+    /** 更新登錄/補登 modal 的期別提示：歸屬期別＋同期已有紀錄的軟性提醒 */
+    function updatePeriodHint_() {
+      const hintEl = document.getElementById('center-form-period-hint');
+      if (!centerFormState) { hintEl.innerHTML = ''; return; }
+      const type = dashboard.centerTypes.find(t => t.id === centerFormState.typeId);
+      const dateValue = document.getElementById('center-form-date').value; // yyyy-MM-dd
+      if (!type || !type.segmentSchedule || !dateValue) { hintEl.innerHTML = ''; return; }
+
+      const info = periodInfoForDate_(type, dateValue.replace(/-/g, '/'));
+      if (!info) { hintEl.innerHTML = ''; return; }
+
+      let html = '此日期屬 <strong>' + escapeHtml(info.label) + '</strong>' +
+        (info.isLegacyEra ? '（當時為' + escapeHtml(info.eraFreqName) + '制）' : '');
+      // 同期已有紀錄 → 軟性提醒（同期多次稽核合法，不阻擋）
+      const samePeriod = type.records.find(function (r) {
+        const y = Number(r.auditDate.slice(0, 4)), m = Number(r.auditDate.slice(5, 7));
+        return y === info.year && m >= info.from && m <= info.to;
+      });
+      if (samePeriod) {
+        html += '<span class="warn">　提醒：該期已有紀錄 ' + escapeHtml(samePeriod.auditDate) + '</span>';
+      }
+      hintEl.innerHTML = html;
+    }
+
+    // ---- 排定／登錄共用表單 ----
+    let centerFormState = null; // {mode: 'plan'|'record', typeId}
+
+    function openCenterForm(mode, typeId) {
+      const type = dashboard.centerTypes.find(t => t.id === typeId);
+      if (!type) return;
+      centerFormState = { mode: mode, typeId: typeId };
+      const isPlan = mode === 'plan';
+
+      document.getElementById('center-form-title').textContent =
+        (isPlan ? '排定稽核 — ' : '登錄完成 — ') + type.name;
+      document.getElementById('center-form-hint').textContent = isPlan
+        ? '排定後此項目狀態變為「待稽核」；重新排定會覆蓋原排程。'
+        : '登錄實際完成日期（選過去日期即為補登歷史）；完成後若有排程將自動清除。';
+      document.getElementById('center-form-date-label').textContent = isPlan ? '預定稽核日期' : '實際稽核日期';
+      document.getElementById('center-form-auditor-label').textContent =
+        isPlan ? '稽核人員（可複選，必填）' : '稽核人員（可複選，補登歷史可留空）';
+
+      // 預設值：排定＝沿用既有排程；登錄＝今天＋既有排程人員
+      const existing = type.plan;
+      const preChecked = new Set(existing ? String(existing.auditorEmails).split(',').filter(Boolean) : []);
+      document.getElementById('center-auditor-list').innerHTML = dashboard.auditors.length === 0
+        ? '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的組員），請先確認人員職務配置。</label>'
+        : dashboard.auditors.map(function (a) {
+            return '<label><input type="checkbox" value="' + escapeHtml(a.email) + '"' +
+              (preChecked.has(a.email) ? ' checked' : '') + '>' +
+              '<span>' + escapeHtml(a.name) + '</span><span class="email">' + escapeHtml(a.email) + '</span></label>';
+          }).join('');
+
+      const dateInput = document.getElementById('center-form-date');
+      if (isPlan && existing) dateInput.value = existing.plannedDate.replace(/\//g, '-');
+      else if (isPlan) dateInput.value = '';
+      else dateInput.value = new Date().toISOString().slice(0, 10); // 登錄預設今天
+
+      // 事由欄位：類型 7/8 顯示，其他隱藏
+      const showReason = type.id === 'ORG' || type.id === 'ADHOC';
+      document.getElementById('center-form-reason-row').classList.toggle('hidden', !showReason);
+      document.getElementById('center-form-reason').value = existing && isPlan ? existing.reason : '';
+
+      document.getElementById('center-form-error').textContent = '';
+      document.getElementById('center-form-save').textContent = isPlan ? '確認排定' : '登錄完成';
+      updatePeriodHint_(); // 依預設日期先顯示期別歸屬
+      document.getElementById('center-form-overlay').classList.add('open');
+    }
+
+    document.getElementById('center-form-date').addEventListener('change', updatePeriodHint_);
+    document.getElementById('center-form-date').addEventListener('input', updatePeriodHint_);
+
+    function closeCenterForm() {
+      document.getElementById('center-form-overlay').classList.remove('open');
+      centerFormState = null;
+    }
+
+    document.getElementById('center-form-cancel').addEventListener('click', closeCenterForm);
+    document.getElementById('center-form-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeCenterForm();
+    });
+
+    document.getElementById('center-form-save').addEventListener('click', function () {
+      const errorEl = document.getElementById('center-form-error');
+      const isPlan = centerFormState.mode === 'plan';
+      const checked = Array.prototype.slice
+        .call(document.getElementById('center-auditor-list').querySelectorAll('input:checked'))
+        .map(el => el.value);
+      const dateValue = document.getElementById('center-form-date').value;
+      const reason = document.getElementById('center-form-reason').value.trim();
+
+      if (!dateValue) { errorEl.textContent = '請選擇日期。'; return; }
+      if (isPlan && checked.length === 0) { errorEl.textContent = '排定稽核需至少勾選一位稽核人員。'; return; }
+
+      const dateText = dateValue.replace(/-/g, '/');
+      const typeId = centerFormState.typeId;
+      const btn = this;
+      btn.disabled = true;
+      const call = isPlan
+        ? callServer('planCenterAudit', typeId, checked, dateText, reason)
+        : callServer('recordCenterAudit', typeId, dateText, checked, reason, '');
+      call
+        .then(function (result) {
+          showToast(result.message, false);
+          closeCenterForm();
+          loadDashboard();
+        })
+        .catch(function (err) { errorEl.textContent = err.message; })
+        .finally(function () { btn.disabled = false; });
+    });
+
+    function confirmCancelCenterPlan(typeId) {
+      const type = dashboard.centerTypes.find(t => t.id === typeId);
+      openModal({
+        title: '取消稽核排程',
+        bodyHtml: '<p>即將取消「<strong>' + escapeHtml(type.name) + '</strong>」的排程' +
+          (type.plan ? '（' + escapeHtml(type.plan.plannedDate) + '）' : '') + '，狀態將退回待排定。</p>',
+        confirmLabel: '確認取消排程',
+        danger: true,
+        onConfirm: function () {
+          return callServer('cancelCenterPlan', typeId).then(function (result) {
+            showToast(result.message, false);
+            loadDashboard();
+          });
+        },
+      });
+    }
+
+    function confirmDeleteCenterRecord(typeId, auditDate) {
+      const type = dashboard.centerTypes.find(t => t.id === typeId);
+      openModal({
+        title: '刪除稽核紀錄',
+        bodyHtml: '<p>即將刪除「<strong>' + escapeHtml(type.name) + '</strong>」於 <strong>' +
+          escapeHtml(auditDate) + '</strong> 的紀錄。此動作會立即影響本期狀態與統計，確定繼續？</p>',
+        confirmLabel: '確認刪除',
+        danger: true,
+        onConfirm: function () {
+          return callServer('deleteCenterAuditRecord', typeId, auditDate).then(function (result) {
+            showToast(result.message, false);
+            loadDashboard();
+          });
+        },
+      });
+    }
+
+    // ---- 觸發事由（類型 7） ----
+    function openTriggerModal() {
+      document.getElementById('trigger-date').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('trigger-category').innerHTML = dashboard.triggerCategories
+        .map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+      document.getElementById('trigger-desc').value = '';
+      document.getElementById('trigger-error').textContent = '';
+      document.getElementById('trigger-overlay').classList.add('open');
+    }
+
+    document.getElementById('trigger-cancel').addEventListener('click', function () {
+      document.getElementById('trigger-overlay').classList.remove('open');
+    });
+    document.getElementById('trigger-overlay').addEventListener('click', function (e) {
+      if (e.target === this) this.classList.remove('open');
+    });
+
+    document.getElementById('trigger-save').addEventListener('click', function () {
+      const errorEl = document.getElementById('trigger-error');
+      const dateValue = document.getElementById('trigger-date').value;
+      if (!dateValue) { errorEl.textContent = '請選擇事件日期。'; return; }
+
+      const btn = this;
+      btn.disabled = true;
+      callServer('addTriggerEvent',
+        dateValue.replace(/-/g, '/'),
+        document.getElementById('trigger-category').value,
+        document.getElementById('trigger-desc').value.trim())
+        .then(function (result) {
+          showToast(result.message, false);
+          document.getElementById('trigger-overlay').classList.remove('open');
+          loadDashboard();
+        })
+        .catch(function (err) { errorEl.textContent = err.message; })
+        .finally(function () { btn.disabled = false; });
+    });
+
+    function confirmDeleteTrigger(eventId) {
+      openModal({
+        title: '刪除觸發事由',
+        bodyHtml: '<p>即將刪除此筆觸發事由，「組織與人員」的待辦數會隨之減少。確定繼續？</p>',
+        confirmLabel: '確認刪除',
+        danger: true,
+        onConfirm: function () {
+          return callServer('deleteTriggerEvent', eventId).then(function (result) {
+            showToast(result.message, false);
+            loadDashboard();
+          });
+        },
+      });
+    }
+
+    // =============================================
+    // 模式切換
+    // =============================================
+    document.getElementById('mode-switch').querySelectorAll('button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (!dashboard || btn.dataset.mode === dashboard.mode) return;
+        confirmModeSwitch(btn.dataset.mode);
+      });
+    });
+
+    function confirmModeSwitch(targetMode) {
+      const explain = targetMode === 'ROLLING'
+        ? '滾動式三年：每站以「上次稽核年＋3」為到期年，從未稽核過的駐站立即成為候選。'
+        : '固定三年區段：以 ' + dashboard.cycle.start + '–' + dashboard.cycle.end + ' 為一輪，每輪開始時所有一般駐站重新計算。';
+      openModal({
+        title: '切換週期計算模式',
+        bodyHtml:
+          '<p>' + explain + '</p>' +
+          '<p>切換後立即對<strong>所有使用者</strong>生效，駐站的候選狀態與建議數量會重新計算；稽核紀錄與分派紀錄不受影響。</p>',
+        confirmLabel: '確認切換',
+        danger: false,
+        onConfirm: function () {
+          return callServer('setCycleMode', targetMode)
+            .then(function (result) {
+              showToast(result.message, false);
+              loadDashboard();
+            });
+        },
+      });
+    }
+
+    // =============================================
+    // 分派流程：草稿 → 批次送出
+    // =============================================
+    let assigningCode = null; // 分派 modal 目前操作的駐站
+
+    function openAssignModal(stationCode) {
+      const station = allStations().find(s => s.code === stationCode);
+      if (!station) return;
+      assigningCode = stationCode;
+      const draft = drafts.get(stationCode);
+      const checkedEmails = new Set(draft ? draft.auditorEmails : []);
+
+      document.getElementById('assign-title').textContent = '分派稽核 — ' + station.name;
+      document.getElementById('auditor-list').innerHTML = dashboard.auditors.length === 0
+        ? '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的組員），請先確認人員職務配置。</label>'
+        : dashboard.auditors.map(function (a) {
+            return '<label><input type="checkbox" value="' + escapeHtml(a.email) + '"' +
+              (checkedEmails.has(a.email) ? ' checked' : '') + '>' +
+              '<span>' + escapeHtml(a.name) + '</span><span class="email">' + escapeHtml(a.email) + '</span></label>';
+          }).join('');
+
+      // date input 需要 yyyy-MM-dd；後端與顯示用 yyyy/MM/dd，存取時轉換
+      document.getElementById('assign-date').value = draft ? draft.plannedDate.replace(/\//g, '-') : '';
+      document.getElementById('assign-error').textContent = '';
+      document.getElementById('assign-overlay').classList.add('open');
+    }
+
+    function closeAssignModal() {
+      document.getElementById('assign-overlay').classList.remove('open');
+      assigningCode = null;
+    }
+
+    document.getElementById('assign-cancel').addEventListener('click', closeAssignModal);
+    document.getElementById('assign-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeAssignModal();
+    });
+
+    document.getElementById('assign-save').addEventListener('click', function () {
+      const errorEl = document.getElementById('assign-error');
+      const checked = Array.prototype.slice
+        .call(document.getElementById('auditor-list').querySelectorAll('input:checked'))
+        .map(el => el.value);
+      const dateValue = document.getElementById('assign-date').value; // yyyy-MM-dd
+
+      if (checked.length === 0) { errorEl.textContent = '請至少勾選一位稽核人員。'; return; }
+      if (!dateValue) { errorEl.textContent = '請選擇預計稽核日期。'; return; }
+
+      const emailToName = {};
+      dashboard.auditors.forEach(a => { emailToName[a.email] = a.name; });
+      drafts.set(assigningCode, {
+        auditorEmails: checked,
+        auditorNames: checked.map(email => emailToName[email] || email),
+        plannedDate: dateValue.replace(/-/g, '/'),
+      });
+      closeAssignModal();
+      renderSections();
+      updateActionBar();
+    });
+
+    // =============================================
+    // 補登歷史稽核紀錄
+    // =============================================
+    const MIN_BACKFILL_YEAR = 2000; // 與後端 ENV.MIN_AUDIT_YEAR 一致
+
+    let backfillingCode = null; // 補登 modal 目前操作的駐站
+
+    function openBackfillModal(stationCode) {
+      const station = allStations().find(s => s.code === stationCode);
+      if (!station) return;
+      backfillingCode = stationCode;
+
+      document.getElementById('backfill-title').textContent = '補登稽核紀錄 — ' + station.name;
+      document.getElementById('backfill-date').value = '';
+      document.getElementById('backfill-hint').innerHTML = '';
+      document.getElementById('backfill-error').textContent = '';
+      document.getElementById('backfill-overlay').classList.add('open');
+    }
+
+    function closeBackfillModal() {
+      document.getElementById('backfill-overlay').classList.remove('open');
+      backfillingCode = null;
+    }
+
+    /** 補登日期即時檢核：該年度已有紀錄則提示並擋存（每站每年僅計一筆） */
+    function validateBackfillDate_() {
+      const hintEl = document.getElementById('backfill-hint');
+      const dateValue = document.getElementById('backfill-date').value; // yyyy-MM-dd
+      if (!backfillingCode || !dateValue) { hintEl.innerHTML = ''; return true; }
+
+      const station = allStations().find(s => s.code === backfillingCode);
+      const year = Number(dateValue.slice(0, 4));
+      if (year < MIN_BACKFILL_YEAR || year > dashboard.currentYear) {
+        hintEl.innerHTML = '<span class="warn">年度需介於 ' + MIN_BACKFILL_YEAR + '～' + dashboard.currentYear + '。</span>';
+        return false;
+      }
+      const existing = station.auditRecords.find(r => r.year === year);
+      if (existing) {
+        hintEl.innerHTML = '<span class="warn">' + year + ' 年已有紀錄（' +
+          escapeHtml(existing.auditDate || existing.year + ' 年') + '），同一駐站每年僅計一筆。</span>';
+        return false;
+      }
+      hintEl.textContent = '將登錄為 ' + year + ' 年的稽核紀錄。';
+      return true;
+    }
+
+    document.getElementById('backfill-date').addEventListener('change', validateBackfillDate_);
+    document.getElementById('backfill-date').addEventListener('input', validateBackfillDate_);
+
+    document.getElementById('backfill-cancel').addEventListener('click', closeBackfillModal);
+    document.getElementById('backfill-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeBackfillModal();
+    });
+
+    document.getElementById('backfill-save').addEventListener('click', function () {
+      const errorEl = document.getElementById('backfill-error');
+      const dateValue = document.getElementById('backfill-date').value;
+      if (!dateValue) { errorEl.textContent = '請選擇稽核日期。'; return; }
+      if (!validateBackfillDate_()) { errorEl.textContent = '請修正日期後再送出。'; return; }
+
+      const dateText = dateValue.replace(/-/g, '/');
+      const btn = this;
+      btn.disabled = true;
+      callServer('recordAudits', [backfillingCode], Number(dateText.slice(0, 4)), dateText)
+        .then(function (result) {
+          showToast(result.message, false);
+          closeBackfillModal();
+          loadDashboard();
+        })
+        .catch(function (err) { errorEl.textContent = err.message; })
+        .finally(function () { btn.disabled = false; });
+    });
+
+    // ---- 歷年稽核紀錄（點擊駐站卡片開啟） ----
+    // ---- 統一歷年紀錄彈窗（駐站／中心共用；紀錄檢視＋刪除＋補登入口） ----
+    let historyModalState = null; // { kind: 'station'|'center', id }
+
+    function openHistoryModal(kind, id) {
+      historyModalState = { kind: kind, id: id };
+      renderHistoryBody_();
+      document.getElementById('history-overlay').classList.add('open');
+    }
+
+    function closeHistoryModal() {
+      document.getElementById('history-overlay').classList.remove('open');
+      historyModalState = null;
+    }
+
+    function renderHistoryBody_() {
+      if (!historyModalState) return;
+      const titleEl = document.getElementById('history-title');
+      const bodyEl = document.getElementById('history-body');
+      const backfillBtn = document.getElementById('history-backfill');
+
+      if (historyModalState.kind === 'station') {
+        const station = allStations().find(s => s.code === historyModalState.id);
+        if (!station) { closeHistoryModal(); return; }
+        titleEl.textContent = '歷年稽核紀錄 — ' + station.name;
+        bodyEl.innerHTML = renderStationHistoryRows_(station);
+        backfillBtn.textContent = '補登紀錄';
+      } else {
+        const type = dashboard.centerTypes.find(t => t.id === historyModalState.id);
+        if (!type) { closeHistoryModal(); return; }
+        titleEl.textContent = '歷年稽核紀錄 — ' + type.name;
+        bodyEl.innerHTML = renderCenterHistoryRows_(type);
+        backfillBtn.textContent = '登錄完成／補登';
+      }
+      bindHistoryDeleteEvents_();
+    }
+
+    function renderStationHistoryRows_(station) {
+      if (station.auditRecords.length === 0) {
+        return '<p class="empty-hist">此駐站尚無稽核紀錄，可由下方「補登紀錄」新增。</p>';
+      }
+      const countedYear = station.evaluation.countedYear;
+      return '<ul class="history-list">' + station.auditRecords.map(function (r) {
+        const dateText = r.auditDate
+          ? '<span class="mono">' + escapeHtml(r.auditDate) + '</span>'
+          : '<span class="mono">' + r.year + ' 年</span><span class="hist-tag">僅年度</span>';
+        const countedTag = (r.year === countedYear) ? '<span class="hist-tag counted">計入週期</span>' : '';
+        return '<li><span class="hist-main">' + dateText + countedTag +
+          (r.recorder ? '　<span class="mono dim">' + escapeHtml(r.recorder) + '</span>' : '') +
+          (r.note ? '　' + escapeHtml(r.note) : '') + '</span>' +
+          '<button class="hist-del" data-del-kind="station" data-code="' + escapeHtml(station.code) +
+          '" data-year="' + r.year + '" title="刪除此筆紀錄" aria-label="刪除 ' + r.year + ' 年紀錄">×</button></li>';
+      }).join('') + '</ul>';
+    }
+
+    function renderCenterHistoryRows_(type) {
+      if (type.records.length === 0) {
+        return '<p class="empty-hist">此項目尚無稽核紀錄，可由下方「登錄完成／補登」新增。</p>';
+      }
+      return '<ul class="history-list">' + type.records.map(function (r) {
+        const periodTag = r.periodLabel ? '<span class="hist-tag">' + escapeHtml(r.periodLabel) + '</span>' : '';
+        return '<li><span class="hist-main"><span class="mono">' + escapeHtml(r.auditDate) + '</span>' + periodTag +
+          (r.auditorNames ? '　' + escapeHtml(r.auditorNames) : '') +
+          (r.reason ? '　<span class="dim">' + escapeHtml(r.reason) + '</span>' : '') +
+          (r.note ? '　' + escapeHtml(r.note) : '') + '</span>' +
+          '<button class="hist-del" data-del-kind="center" data-type="' + escapeHtml(type.id) +
+          '" data-date="' + escapeHtml(r.auditDate) + '" title="刪除此筆紀錄">×</button></li>';
+      }).join('') + '</ul>';
+    }
+
+    function bindHistoryDeleteEvents_() {
+      document.getElementById('history-body').querySelectorAll('.hist-del').forEach(function (el) {
+        el.addEventListener('click', function () {
+          if (el.dataset.delKind === 'station') confirmDeleteRecord(el.dataset.code, Number(el.dataset.year));
+          else confirmDeleteCenterRecord(el.dataset.type, el.dataset.date);
+        });
+      });
+    }
+
+    /** loadDashboard 完成後，若歷年彈窗開著則以最新資料重繪（刪除/補登後即時更新） */
+    function refreshHistoryBody_() {
+      if (historyModalState && document.getElementById('history-overlay').classList.contains('open')) {
+        renderHistoryBody_();
+      }
+    }
+
+    document.getElementById('history-close').addEventListener('click', closeHistoryModal);
+    document.getElementById('history-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeHistoryModal();
+    });
+    document.getElementById('history-backfill').addEventListener('click', function () {
+      if (!historyModalState) return;
+      if (historyModalState.kind === 'station') openBackfillModal(historyModalState.id);
+      else openCenterForm('record', historyModalState.id);
+    });
+
+    // =============================================
+    // 稽核紀錄匯出／匯入
+    // =============================================
+    let importScope = null; // 目前匯入操作的範圍（檔案選取後使用）
+
+    document.querySelectorAll('[data-export]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        triggerExport_(btn.dataset.export, btn.dataset.format, btn);
+      });
+    });
+    document.querySelectorAll('[data-import]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        importScope = btn.dataset.import;
+        const input = document.getElementById('import-file');
+        input.value = ''; // 清空以允許重選同一檔案
+        input.click();
+      });
+    });
+
+    function triggerExport_(scope, format, btn) {
+      btn.disabled = true;
+      callServer('exportAuditRecords', scope, format)
+        .then(function (file) {
+          downloadBase64_(file.contentBase64, file.filename, file.mimeType);
+          showToast('已匯出 ' + file.filename, false);
+        })
+        .catch(function (err) { showToast(err.message, true); })
+        .finally(function () { btn.disabled = false; });
+    }
+
+    /** base64 → Blob → 觸發瀏覽器下載（client-side，不受 GAS sandbox 限制） */
+    function downloadBase64_(base64, filename, mimeType) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    document.getElementById('import-file').addEventListener('change', function () {
+      const file = this.files[0];
+      if (!file || !importScope) return;
+      const scope = importScope;
+      const reader = new FileReader();
+      reader.onload = function () { confirmImport_(scope, String(reader.result), file.name); };
+      reader.readAsText(file, 'UTF-8');
+    });
+
+    function confirmImport_(scope, csvText, filename) {
+      const scopeLabel = scope === 'center' ? '中心稽核' : '駐站稽核';
+      const dupLabel = scope === 'center' ? '同項目同日期' : '同駐站同年度';
+      openModal({
+        title: '匯入' + scopeLabel + '紀錄',
+        bodyHtml:
+          '<p>檔案：<span class="mono">' + escapeHtml(filename) + '</span></p>' +
+          '<p>採<strong>合併模式</strong>：新增檔案中不存在的紀錄，已存在的（' + dupLabel +
+          '）自動跳過，<strong>現有資料不會被刪除</strong>。</p>',
+        confirmLabel: '確認匯入',
+        danger: false,
+        onConfirm: function () {
+          return callServer('importAuditRecords', scope, csvText).then(function (result) {
+            showToast(result.message, false);
+            loadDashboard();
+          });
+        },
+      });
+    }
+
+    // =============================================
+    // 週期起始年設定（僅固定模式）
+    // =============================================
+    document.getElementById('btn-cycle-settings').addEventListener('click', function () {
+      if (!dashboard) return;
+      const options = [];
+      for (let y = dashboard.currentYear + 1; y >= 2020; y--) {
+        options.push('<option value="' + y + '"' + (y === dashboard.cycleStartYear ? ' selected' : '') + '>' + y + '</option>');
+      }
+      openModal({
+        title: '設定週期起始年',
+        bodyHtml:
+          '<p>固定三年區段以「起始年」為錨點切分（如 2025 → 2025–2027、2028–2030）。</p>' +
+          '<div class="form-row"><label for="cycle-start-select">起始年</label>' +
+          '<select id="cycle-start-select">' + options.join('') + '</select></div>' +
+          '<div class="cycle-preview" id="cycle-preview"></div>' +
+          '<p>變更後立即對<strong>所有使用者</strong>生效，週期覆蓋與建議數量會重新計算；稽核紀錄不受影響。</p>',
+        confirmLabel: '確認變更',
+        danger: false,
+        onConfirm: function () {
+          const year = Number(document.getElementById('cycle-start-select').value);
+          return callServer('setCycleStartYear', year)
+            .then(function (result) {
+              showToast(result.message, false);
+              loadDashboard();
+            });
+        },
+      });
+      // 即時預覽選定起始年形成的目前週期
+      const select = document.getElementById('cycle-start-select');
+      const preview = document.getElementById('cycle-preview');
+      function updatePreview() {
+        const cycle = getCycleForCurrentYear_(Number(select.value));
+        preview.textContent = '目前年度（' + dashboard.currentYear + '）將落在週期 ' + cycle.start + '–' + cycle.end;
+      }
+      select.addEventListener('change', updatePreview);
+      updatePreview();
+    });
+
+    /** 前端版週期區段計算（與後端 getCycleForYear 同式），供設定預覽即時顯示 */
+    function getCycleForCurrentYear_(anchorYear) {
+      const LENGTH = 3;
+      const start = anchorYear + Math.floor((dashboard.currentYear - anchorYear) / LENGTH) * LENGTH;
+      return { start: start, end: start + LENGTH - 1 };
+    }
+
+    function confirmSubmitAssignments() {
+      const items = Array.from(drafts.entries());
+      const byCode = {};
+      allStations().forEach(s => { byCode[s.code] = s; });
+      openModal({
+        title: '送出 ' + dashboard.currentYear + ' 年稽核分派',
+        bodyHtml:
+          '<p>以下 ' + items.length + ' 間駐站的分派將寫入「稽核分派」工作表，狀態變更為<strong>待稽核</strong>：</p>' +
+          '<ul>' + items.map(function (entry) {
+            const station = byCode[entry[0]];
+            return '<li>' + escapeHtml(station ? station.name : entry[0]) +
+              '：' + escapeHtml(entry[1].auditorNames.join('、')) +
+              ' <span class="mono">' + escapeHtml(entry[1].plannedDate) + '</span></li>';
+          }).join('') + '</ul>',
+        confirmLabel: '送出確定分派',
+        danger: false,
+        onConfirm: function () { return submitDrafts_(); },
+      });
+    }
+
+    function submitDrafts_() {
+      const assignmentList = Array.from(drafts.entries()).map(function (entry) {
+        return { stationCode: entry[0], auditorEmails: entry[1].auditorEmails, plannedDate: entry[1].plannedDate };
+      });
+      const progress = startTheatricalProgress();
+      return callServer('submitAssignments', assignmentList, dashboard.currentYear)
+        .then(function (result) {
+          progress.finish('分派完成', function () {
+            showToast(result.message, false);
+            drafts.clear();
+            loadDashboard();
+          });
+        })
+        .catch(function (err) { progress.fail(err.message); });
+    }
+
+    function confirmCancelAssignment(stationCode) {
+      const station = allStations().find(s => s.code === stationCode);
+      openModal({
+        title: '取消稽核分派',
+        bodyHtml:
+          '<p>即將取消 <strong>' + escapeHtml(station ? station.name : stationCode) + '</strong>' +
+          ' 於 ' + dashboard.currentYear + ' 年的稽核分派，狀態將退回候選。</p>',
+        confirmLabel: '確認取消分派',
+        danger: true,
+        onConfirm: function () {
+          return callServer('cancelAssignment', stationCode, dashboard.currentYear)
+            .then(function (result) {
+              showToast(result.message, false);
+              loadDashboard();
+            });
+        },
+      });
+    }
+
+    // =============================================
+    // 劇場式進度條：5 秒推進到 90%，後端完成後補到 100%
+    // =============================================
+    const PROGRESS_STAGES = [
+      { until: 25,  text: '正在驗證駐站與人員資料…' },
+      { until: 55,  text: '正在寫入稽核分派…' },
+      { until: 80,  text: '正在同步至試算表…' },
+      { until: 100, text: '正在更新駐站狀態…' },
+    ];
+
+    function startTheatricalProgress() {
+      const overlay = document.getElementById('progress-overlay');
+      const fill = document.getElementById('theatrical-fill');
+      const stageEl = document.getElementById('theatrical-stage');
+      const percentEl = document.getElementById('theatrical-percent');
+      const closeRow = document.getElementById('progress-close-row');
+
+      fill.className = 'progress-fill-lg';
+      stageEl.className = 'progress-stage';
+      closeRow.classList.add('hidden');
+      overlay.classList.add('open');
+
+      let percent = 0;
+      const TARGET = 90, DURATION_MS = 5000, STEP_MS = 250;
+      const startedAt = Date.now();
+
+      function paint() {
+        fill.style.width = percent + '%';
+        percentEl.textContent = Math.round(percent) + '%';
+        const stage = PROGRESS_STAGES.find(s => percent < s.until) || PROGRESS_STAGES[PROGRESS_STAGES.length - 1];
+        stageEl.textContent = stage.text;
+      }
+      paint();
+
+      // 以實際經過時間推算百分比（而非固定步進）：
+      // 瀏覽器在背景分頁會將計時器節流到 1 次/秒，步進制會讓 5 秒的節奏失真
+      const timer = setInterval(function () {
+        if (percent >= TARGET) return; // 停在 90%，等後端回應
+        const elapsed = Date.now() - startedAt;
+        percent = Math.min(TARGET, (elapsed / DURATION_MS) * TARGET);
+        paint();
+      }, STEP_MS);
+
+      // 完成需同時滿足「後端已回應」與「進度已演到 90%」，維持完整的處理感
+      function complete(message, afterClose) {
+        clearInterval(timer);
+        percent = 100;
+        fill.style.width = '100%';
+        fill.classList.add('success');
+        percentEl.textContent = '100%';
+        stageEl.textContent = message;
+        setTimeout(function () {
+          overlay.classList.remove('open');
+          if (afterClose) afterClose();
+        }, 900);
+      }
+
+      return {
+        finish: function (message, afterClose) {
+          const wait = setInterval(function () {
+            if (percent >= TARGET) {
+              clearInterval(wait);
+              complete(message, afterClose);
+            }
+          }, 120);
+        },
+        fail: function (errorMessage) {
+          clearInterval(timer);
+          fill.classList.add('error');
+          stageEl.className = 'progress-stage error';
+          stageEl.textContent = '送出失敗：' + errorMessage;
+          closeRow.classList.remove('hidden');
+        },
+      };
+    }
+
+    document.getElementById('progress-close').addEventListener('click', function () {
+      document.getElementById('progress-overlay').classList.remove('open');
+    });
+
+    // =============================================
+    // 底部動作列與登錄流程
+    // =============================================
+    function renderYearOptions() {
+      const select = document.getElementById('year-select');
+      // 可回填範圍：固定模式＝本週期起始年起；滾動模式＝近三年（防誤登未來年度）
+      const minYear = dashboard.mode === 'ROLLING' ? dashboard.currentYear - 3 : dashboard.cycle.start;
+      const years = [];
+      for (let y = dashboard.currentYear; y >= minYear; y--) years.push(y);
+      select.innerHTML = years.map(function (y) {
+        return '<option value="' + y + '"' + (y === dashboard.currentYear ? ' selected' : '') + '>' + y + '</option>';
+      }).join('');
+    }
+
+    function updateActionBar() {
+      const bar = document.getElementById('action-bar');
+      const hasSelection = selectedCodes.size > 0;
+      const hasDrafts = drafts.size > 0;
+      // 動作列屬於駐站流程，切到中心分頁時收起避免誤導
+      bar.classList.toggle('visible', currentTab === 'station' && (hasSelection || hasDrafts));
+
+      const parts = [];
+      if (hasSelection) parts.push('已勾選 ' + selectedCodes.size + ' 間');
+      if (hasDrafts) parts.push('待送出分派 ' + drafts.size + ' 間');
+      document.getElementById('selected-info').textContent = parts.join('　·　');
+
+      document.getElementById('btn-record').classList.toggle('hidden', !hasSelection);
+      document.getElementById('btn-clear').classList.toggle('hidden', !hasSelection);
+      document.getElementById('year-select-wrap').classList.toggle('hidden', !hasSelection);
+      const submitBtn = document.getElementById('btn-submit-plans');
+      submitBtn.classList.toggle('hidden', !hasDrafts);
+      submitBtn.textContent = '送出確定分派 ' + drafts.size + ' 間';
+    }
+
+    function confirmRecordAudits() {
+      const year = Number(document.getElementById('year-select').value);
+      const stations = allStations().filter(s => selectedCodes.has(s.code));
+      openModal({
+        title: '登錄 ' + year + ' 年稽核紀錄',
+        bodyHtml:
+          '<p>以下 ' + stations.length + ' 間駐站將標記為 <strong>' + year + ' 年已稽核</strong>：</p>' +
+          '<ul>' + stations.map(function (s) {
+            return '<li>' + escapeHtml(s.name) + ' <span class="mono">' + escapeHtml(s.code) + '</span></li>';
+          }).join('') + '</ul>' +
+          '<p class="mono">紀錄將寫入「稽核紀錄」工作表，可於卡片年度標籤上刪除更正。</p>',
+        confirmLabel: '確認登錄 ' + stations.length + ' 間',
+        danger: false,
+        onConfirm: function () {
+          return callServer('recordAudits', Array.from(selectedCodes), year)
+            .then(function (result) {
+              showToast(result.message, false);
+              selectedCodes.clear();
+              loadDashboard();
+            });
+        },
+      });
+    }
+
+    function confirmDeleteRecord(stationCode, year) {
+      const station = allStations().find(s => s.code === stationCode);
+      openModal({
+        title: '刪除稽核紀錄',
+        bodyHtml:
+          '<p>即將刪除 <strong>' + escapeHtml(station ? station.name : stationCode) + '</strong>' +
+          ' <span class="mono">' + escapeHtml(stationCode) + '</span> 於 <strong>' + year + ' 年</strong>的稽核紀錄。</p>' +
+          '<p>此動作會立即影響候選狀態與週期進度，確定繼續？</p>',
+        confirmLabel: '確認刪除',
+        danger: true,
+        onConfirm: function () {
+          return callServer('deleteAuditRecord', stationCode, year)
+            .then(function (result) {
+              showToast(result.message, false);
+              loadDashboard();
+            });
+        },
+      });
+    }
+
+    // =============================================
+    // Modal 控制
+    // =============================================
+    let modalConfirmHandler = null;
+
+    function openModal(config) {
+      document.getElementById('modal-title').textContent = config.title;
+      document.getElementById('modal-body').innerHTML = config.bodyHtml;
+      const confirmBtn = document.getElementById('modal-confirm');
+      confirmBtn.textContent = config.confirmLabel;
+      confirmBtn.className = 'btn ' + (config.danger ? 'btn-danger' : 'btn-confirm');
+      modalConfirmHandler = config.onConfirm;
+      document.getElementById('modal-overlay').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('open');
+      modalConfirmHandler = null;
+    }
+
+    document.getElementById('modal-cancel').addEventListener('click', closeModal);
+    document.getElementById('modal-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeModal();
+    });
+    document.getElementById('modal-confirm').addEventListener('click', function () {
+      if (!modalConfirmHandler) return;
+      const handler = modalConfirmHandler;
+      const btn = this;
+      btn.disabled = true;
+      handler()
+        .catch(function (err) { showToast(err.message, true); })
+        .finally(function () { btn.disabled = false; closeModal(); });
+    });
+
+    document.getElementById('btn-record').addEventListener('click', confirmRecordAudits);
+    document.getElementById('btn-submit-plans').addEventListener('click', confirmSubmitAssignments);
+    document.getElementById('btn-clear').addEventListener('click', function () {
+      selectedCodes.clear();
+      renderSections();
+      updateActionBar();
+    });
+
+    // =============================================
+    // 本機預覽假資料（僅在無 google.script 環境時使用）
+    // 週期/候選邏輯直接呼叫 AuditCycle.js 的真實純函式，與後端一致
+    // =============================================
+    function mockServer(fnName, args) {
+      const state = mockServer._state || (mockServer._state = {
+        mode: 'FIXED',
+        cycleStartYear: 2026,
+        records: [
+          { stationCode: 'GRP-CO-A01', year: 2026, auditDate: '2026/03/15' },
+          { stationCode: 'GRP-CO-A02', year: 2025, auditDate: '2025/11/02' },
+          { stationCode: 'GRP-CO-B01', year: 2026, auditDate: '2026/01/20' },
+          { stationCode: 'GRP-CO-B03', year: 2026, auditDate: '' },  // 僅年度示範（早期資料）
+          { stationCode: 'GRP-CO-B04', year: 2022, auditDate: '' },  // 逾期示範：距 2026 已滿三年
+        ],
+        assignments: [],
+        // 中心稽核預置情境：半年制 H1 已稽、每年制有排程／去年漏稽／已完成、事件一開一銷、不定期一筆
+        centerRecords: [
+          { typeId: 'WITHDRAW', auditDate: '2026/03/10', auditorNames: '稽核·趙', reason: '', note: '' },
+          { typeId: 'WITHDRAW', auditDate: '2023/09/15', auditorNames: '稽核·錢', reason: '', note: '' }, // 舊制（每半年）示範
+          { typeId: 'INFOSEC',  auditDate: '2024/11/20', auditorNames: '稽核·錢', reason: '', note: '' },
+          { typeId: 'DBUSE',    auditDate: '2026/01/15', auditorNames: '稽核·孫', reason: '', note: '' },
+          { typeId: 'ORG',      auditDate: '2025/11/01', auditorNames: '稽核·李', reason: '設置許可展延稽核', note: '' },
+          { typeId: 'ADHOC',    auditDate: '2026/02/14', auditorNames: '稽核·趙', reason: '主管機關指示專案稽核', note: '' },
+        ],
+        centerPlans: [
+          { typeId: 'DEIDENT', plannedDate: '2026/08/15', auditorNames: '稽核·趙', auditorEmails: 'audit.chao@example.com', reason: '' },
+        ],
+        triggers: [
+          { eventId: 'TRG-1', eventDate: '2025/10/01', category: '設置許可展延', description: '展延五年核准' },
+          { eventId: 'TRG-2', eventDate: '2026/05/20', category: '資料庫人員異動', description: '新進兩名管理師' },
+        ],
+      });
+      const stations = [
+        { code: 'GRP-CO-A01', name: '台北車站駐站', managerName: '王主任', isCertified: true,  members: [{ name: '陳一', title: '駐站人員' }, { name: '林二', title: '駐站人員' }] },
+        { code: 'GRP-CO-A02', name: '板橋駐站',     managerName: '李主任', isCertified: true,  members: [{ name: '張三', title: '駐站人員' }] },
+        { code: 'GRP-CO-A03', name: '桃園駐站',     managerName: '吳主任', isCertified: true,  members: [] },
+        { code: 'GRP-CO-B01', name: '新竹駐站',     managerName: '劉組長', isCertified: false, members: [{ name: '黃四', title: '駐站人員' }] },
+        { code: 'GRP-CO-B02', name: '台中駐站',     managerName: '蔡組長', isCertified: false, members: [{ name: '許五', title: '駐站人員' }, { name: '鄭六', title: '駐站人員' }] },
+        { code: 'GRP-CO-B03', name: '嘉義駐站',     managerName: '楊組長', isCertified: false, members: [] },
+        { code: 'GRP-CO-B04', name: '台南駐站',     managerName: '謝組長', isCertified: false, members: [{ name: '周七', title: '駐站人員' }] },
+        { code: 'GRP-CO-B05', name: '高雄駐站',     managerName: '洪組長', isCertified: false, members: [{ name: '葉八', title: '駐站人員' }] },
+      ];
+      const auditors = [
+        { name: '稽核·趙', email: 'audit.chao@example.com' },
+        { name: '稽核·錢', email: 'audit.chien@example.com' },
+        { name: '稽核·孫', email: 'audit.sun@example.com' },
+        { name: '稽核·李', email: 'audit.lee@example.com' },
+      ];
+      const currentYear = 2026;
+      const cycle = getCycleForYear(currentYear, state.cycleStartYear, 3);
+
+      if (fnName === 'setCycleMode') {
+        state.mode = args[0];
+        return Promise.resolve({ mode: state.mode, message: '【預覽模式】已切換週期模式' });
+      }
+      if (fnName === 'setCycleStartYear') {
+        state.cycleStartYear = args[0];
+        return Promise.resolve({ cycleStartYear: args[0], message: '【預覽模式】已將週期起始年設為 ' + args[0] });
+      }
+      if (fnName === 'recordAudits') {
+        // 與後端同邏輯：未帶日期且登錄今年時自動填當天
+        const auditDate = args[2] || (args[1] === currentYear ? new Date().toISOString().slice(0, 10).replace(/-/g, '/') : '');
+        args[0].forEach(code => state.records.push({ stationCode: code, year: args[1], auditDate: auditDate }));
+        return Promise.resolve({ message: '【預覽模式】已登錄 ' + args[0].length + ' 間駐站', added: args[0].length, skipped: [] });
+      }
+      if (fnName === 'deleteAuditRecord') {
+        const idx = state.records.findIndex(r => r.stationCode === args[0] && r.year === args[1]);
+        if (idx >= 0) state.records.splice(idx, 1);
+        return Promise.resolve({ message: '【預覽模式】已刪除紀錄' });
+      }
+      if (fnName === 'submitAssignments') {
+        const emailToName = {};
+        auditors.forEach(a => { emailToName[a.email] = a.name; });
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            args[0].forEach(function (item) {
+              state.assignments = state.assignments.filter(p => !(p.stationCode === item.stationCode && p.year === args[1]));
+              state.assignments.push({
+                stationCode: item.stationCode, year: args[1],
+                auditorNames: item.auditorEmails.map(e => emailToName[e] || e).join('、'),
+                auditorEmails: item.auditorEmails.join(','),
+                plannedDate: item.plannedDate,
+                calendarEventId: 'mock-evt-' + Date.now(),
+              });
+            });
+            resolve({ saved: args[0].length, message: '【預覽模式】已送出 ' + args[0].length + ' 間駐站的稽核分派，已同步行事曆' });
+          }, 1600);
+        });
+      }
+      if (fnName === 'cancelAssignment') {
+        state.assignments = state.assignments.filter(p => !(p.stationCode === args[0] && p.year === args[1]));
+        return Promise.resolve({ message: '【預覽模式】已取消分派，已同步行事曆' });
+      }
+
+      // ---- 中心稽核 API（與 code.js 同邏輯的精簡版）----
+      const typeNameOf = id => (AUDIT_TYPE_DEFS.find(t => t.id === id) || {}).name || id;
+      const auditorNamesOf = emails => emails.map(e => (auditors.find(a => a.email === e) || { name: e }).name).join('、');
+      if (fnName === 'planCenterAudit') {
+        state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]);
+        state.centerPlans.push({ typeId: args[0], plannedDate: args[2], auditorNames: auditorNamesOf(args[1]), auditorEmails: args[1].join(','), reason: args[3] || '', calendarEventId: 'mock-evt-' + Date.now() });
+        return Promise.resolve({ message: '【預覽模式】已排定「' + typeNameOf(args[0]) + '」於 ' + args[2] + ' 稽核，已同步行事曆' });
+      }
+      if (fnName === 'cancelCenterPlan') {
+        state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]);
+        return Promise.resolve({ message: '【預覽模式】已取消排程，已同步行事曆' });
+      }
+      if (fnName === 'recordCenterAudit') {
+        if (state.centerRecords.some(r => r.typeId === args[0] && r.auditDate === args[1])) {
+          return Promise.reject(new Error('「' + typeNameOf(args[0]) + '」於 ' + args[1] + ' 已有紀錄，請勿重複登錄'));
+        }
+        state.centerRecords.push({ typeId: args[0], auditDate: args[1], auditorNames: auditorNamesOf(args[2] || []), reason: args[3] || '', note: '' });
+        state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]); // 完成後清排程
+        return Promise.resolve({ message: '【預覽模式】已登錄「' + typeNameOf(args[0]) + '」於 ' + args[1] + ' 完成稽核' });
+      }
+      if (fnName === 'deleteCenterAuditRecord') {
+        state.centerRecords = state.centerRecords.filter(r => !(r.typeId === args[0] && r.auditDate === args[1]));
+        return Promise.resolve({ message: '【預覽模式】已刪除紀錄' });
+      }
+      if (fnName === 'addTriggerEvent') {
+        state.triggers.push({ eventId: 'TRG-' + Date.now(), eventDate: args[0], category: args[1], description: args[2] || '' });
+        return Promise.resolve({ message: '【預覽模式】已登記觸發事由「' + args[1] + '」' });
+      }
+      if (fnName === 'deleteTriggerEvent') {
+        state.triggers = state.triggers.filter(t => t.eventId !== args[0]);
+        return Promise.resolve({ message: '【預覽模式】已刪除觸發事由' });
+      }
+      if (fnName === 'exportAuditRecords' || fnName === 'importAuditRecords') {
+        // 與 code.js getExportView_ 同構：駐站／中心各自的欄位、紀錄、去重鍵與寫入
+        const stationNameOf = code => (stations.find(s => s.code === code) || {}).name || '';
+        const view = (args[0] === 'center') ? {
+          label: '中心稽核紀錄', columns: CENTER_CSV_COLUMNS,
+          records: state.centerRecords.map(r => ({
+            typeId: r.typeId, typeName: typeNameOf(r.typeId), auditDate: r.auditDate,
+            auditorNames: r.auditorNames, reason: r.reason || '', note: r.note || '',
+          })),
+          keyFn: r => r.typeId + '|' + r.auditDate,
+          add: rec => state.centerRecords.push({
+            typeId: rec.typeId, auditDate: rec.auditDate, auditorNames: rec.auditorNames,
+            reason: rec.reason || '', note: rec.note || '',
+          }),
+        } : {
+          label: '駐站收案稽核紀錄', columns: STATION_CSV_COLUMNS,
+          records: state.records.map(r => ({
+            stationCode: r.stationCode, stationName: stationNameOf(r.stationCode), year: r.year,
+            auditDate: r.auditDate || '', recorder: r.recorder || '', note: r.note || '',
+          })),
+          keyFn: r => r.stationCode + '|' + r.year,
+          add: rec => state.records.push({
+            stationCode: rec.stationCode, year: Number(rec.year) || rec.year,
+            auditDate: rec.auditDate || '', recorder: rec.recorder || '', note: rec.note || '',
+          }),
+        };
+
+        if (fnName === 'exportAuditRecords') {
+          const csv = toCsv(recordsToRows(view.records, view.columns));
+          const contentBase64 = btoa(unescape(encodeURIComponent('﻿' + csv)));
+          const stamp = new Date().toISOString().slice(0, 10);
+          return Promise.resolve({
+            filename: view.label + '-' + stamp + '.csv',
+            mimeType: 'text/csv', contentBase64: contentBase64,
+          });
+        }
+        // importAuditRecords：args[1] 為 CSV 文字
+        const parsed = rowsToRecords(parseCsv(args[1]), view.columns);
+        if (parsed.missingHeaders.length) {
+          return Promise.reject(new Error('CSV 表頭缺漏：' + parsed.missingHeaders.join('、')));
+        }
+        const merged = mergeImport(view.records, parsed.records, view.keyFn);
+        merged.toAdd.forEach(view.add);
+        return Promise.resolve({
+          added: merged.toAdd.length, skipped: merged.skipped.length,
+          message: '【預覽模式】已匯入 ' + merged.toAdd.length + ' 筆，跳過 ' + merged.skipped.length + ' 筆重複',
+        });
+      }
+
+      // getAuditDashboard：與 code.js 相同的組裝流程
+      const assignmentByStation = {};
+      state.assignments.forEach(p => { if (p.year === currentYear) assignmentByStation[p.stationCode] = p; });
+
+      const evaluated = stations.map(function (st) {
+        const stationRecords = state.records.filter(r => r.stationCode === st.code);
+        const years = stationRecords.map(r => r.year);
+        const evaluation = evaluateStation(st, years, currentYear, cycle, state.mode);
+        const assignment = assignmentByStation[st.code] || null;
+        if (assignment && evaluation.status !== STATION_STATUS.AUDITED_THIS_YEAR) {
+          evaluation.status = STATION_STATUS.PENDING_AUDIT;
+        }
+        // 與後端 buildStationAuditView_ 同邏輯：倒序＋上次稽核顯示文字
+        const sortedRecords = stationRecords.slice().sort(function (a, b) {
+          if (a.year !== b.year) return b.year - a.year;
+          return String(b.auditDate || '').localeCompare(String(a.auditDate || ''));
+        });
+        const latest = sortedRecords[0] || null;
+        return Object.assign({}, st, {
+          alias: '', managerEmail: '',
+          allAuditYears: years.slice().sort(),
+          auditRecords: sortedRecords.map(r => ({ year: r.year, auditDate: r.auditDate || '', recorder: 'preview@local', note: '' })),
+          lastAuditDisplay: latest ? (latest.auditDate || latest.year + ' 年') : '',
+          assignment: assignment && { auditorNames: assignment.auditorNames, auditorEmails: assignment.auditorEmails, plannedDate: assignment.plannedDate },
+          history: buildAuditHistory(years, currentYear),
+          evaluation: evaluation,
+        });
+      });
+
+      const summary = buildCycleSummary(evaluated, currentYear, cycle, state.mode);
+      summary.plannedThisYear = Object.keys(assignmentByStation).length;
+      summary.auditedThisYear = evaluated.filter(s => s.evaluation.auditedThisYear).length;
+
+      // 中心稽核儀表板（與 code.js 的 buildCenterDashboard_ 同流程，走真實純函式）
+      const todayParts = { year: currentYear, month: new Date().getMonth() + 1 };
+      const orgDates = state.centerRecords.filter(r => r.typeId === 'ORG').map(r => r.auditDate);
+      const resolvedTriggers = resolveTriggerEvents(state.triggers, orgDates)
+        .sort((a, b) => a.eventDate < b.eventDate ? 1 : -1);
+      const openCount = resolvedTriggers.filter(t => !t.resolved).length;
+      const centerTypes = AUDIT_TYPE_DEFS.filter(t => t.frequency !== 'STATION').map(function (typeDef) {
+        const records = state.centerRecords.filter(r => r.typeId === typeDef.id)
+          .sort((a, b) => a.auditDate < b.auditDate ? 1 : -1);
+        const plan = state.centerPlans.find(p => p.typeId === typeDef.id) || null;
+        const open = typeDef.id === 'ORG' ? openCount : 0;
+        return {
+          id: typeDef.id, order: typeDef.order, name: typeDef.name,
+          frequency: typeDef.frequency, freqLabel: typeDef.freqLabel,
+          records: records.map(r => Object.assign({}, r, { periodLabel: getPeriodLabelForDate(typeDef, r.auditDate) })),
+          plan: plan,
+          triggers: typeDef.id === 'ORG' ? resolvedTriggers : null,
+          openTriggerCount: open,
+          segmentSchedule: getSegmentScheduleForType(typeDef),
+          evaluation: evaluateCenterType(typeDef, records.map(r => r.auditDate), plan, open, todayParts, state.cycleStartYear, state.mode),
+        };
+      });
+
+      return new Promise(resolve => setTimeout(() => resolve({
+        currentYear: currentYear, mode: state.mode, cycleStartYear: state.cycleStartYear, cycle: cycle, summary: summary, auditors: auditors,
+        certifiedStations: evaluated.filter(s => s.isCertified),
+        normalStations: evaluated.filter(s => !s.isCertified),
+        centerTypes: centerTypes,
+        centerSummary: buildCenterSummary(centerTypes),
+        triggerCategories: TRIGGER_CATEGORIES,
+        userEmail: 'preview@local',
+      }), 350));
+    }
+
+    // 啟動
+    loadDashboard();
+  </script>
+</body>
+</html>

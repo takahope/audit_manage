@@ -47,6 +47,48 @@ function createAuditCalendarEvent(title, dateText, description, guestEmails) {
 }
 
 /**
+ * 更新既有稽核事件（複用同一筆預約：日期、標題、說明、與會者增修）。
+ *
+ * 用於「先訂日期、後補人員」的情境——受邀者收到的是事件更新而非取消＋新建。
+ * 事件已不存在（被手動刪除）時回 null，由呼叫端 fallback 改為建立新事件。
+ *
+ * @param {string} eventId
+ * @param {string} title
+ * @param {string} dateText - 預定日期 yyyy/MM/dd
+ * @param {string} description
+ * @param {string[]} guestEmails - 目標與會者信箱（會與現有名單對帳增刪）
+ * @returns {string|null} 事件 ID；找不到事件時回 null
+ */
+function updateAuditCalendarEvent(eventId, title, dateText, description, guestEmails) {
+  if (!String(eventId || '').trim()) return null;
+  const event = getAuditCalendar_().getEventById(eventId);
+  if (!event) return null;
+
+  event.setTitle(title);
+  event.setDescription(description);
+
+  const parts = dateText.split('/');
+  const newDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  // setAllDayDate 會把事件重設為該日整日事件（日期不變時呼叫亦無副作用）
+  event.setAllDayDate(newDate);
+
+  // 與會者對帳：移除不在新名單者、補上缺少者（避免重建造成重複邀請）
+  const want = {};
+  (guestEmails || []).forEach(function (e) { want[String(e).trim().toLowerCase()] = true; });
+  const have = {};
+  event.getGuestList().forEach(function (g) {
+    const email = String(g.getEmail()).trim().toLowerCase();
+    have[email] = true;
+    if (!want[email]) event.removeGuest(g.getEmail());
+  });
+  Object.keys(want).forEach(function (email) {
+    if (!have[email]) event.addGuest(email);
+  });
+
+  return event.getId();
+}
+
+/**
  * 刪除稽核事件。事件已不存在（手動刪除過）視為成功，不丟錯。
  *
  * @param {string} eventId

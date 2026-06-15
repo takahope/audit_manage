@@ -401,7 +401,6 @@
     .btn:hover { filter: brightness(0.92); }
     .btn:disabled { opacity: .6; cursor: default; }
     .btn-record { background: var(--color-accent); color: #fff; }
-    .btn-submit-plans { background: var(--color-pending); color: #fff; }
     .btn-ghost  { background: none; border: 1px solid rgba(255,255,255,.4); color: #fff; }
     .btn-cancel { background: none; border: 1px solid var(--color-border); color: var(--color-text); }
     .btn-confirm { background: var(--color-primary); color: #fff; }
@@ -457,32 +456,6 @@
     .form-error { font-size: 13px; color: var(--color-danger); min-height: 20px; }
     .period-hint { font-size: 12px; color: var(--color-muted); margin-top: var(--space-1); min-height: 18px; }
     .period-hint .warn { color: var(--color-danger); }
-
-    /* ===== 劇場式進度 overlay ===== */
-    .progress-overlay {
-      position: fixed; inset: 0; background: rgba(28,28,28,.55);
-      display: none; align-items: center; justify-content: center; z-index: 150;
-      padding: var(--space-3);
-    }
-    .progress-overlay.open { display: flex; }
-    .progress-card {
-      background: var(--color-card); border-top: 3px solid var(--color-pending);
-      width: 100%; max-width: 420px;
-      padding: var(--space-4) var(--space-5) var(--space-5);
-    }
-    .progress-card .title { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin-bottom: var(--space-3); }
-    .progress-track-lg { height: 12px; background: var(--color-pending-soft); overflow: hidden; }
-    .progress-fill-lg {
-      height: 100%; width: 0; background: var(--color-pending);
-      transition: width .22s linear;
-    }
-    .progress-fill-lg.success { background: var(--color-primary); }
-    .progress-fill-lg.error { background: var(--color-danger); }
-    .progress-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: var(--space-2); }
-    .progress-stage { font-size: 13px; color: var(--color-muted); }
-    .progress-stage.error { color: var(--color-danger); }
-    .progress-percent { font-family: var(--font-data); font-size: 13px; color: var(--color-pending); }
-    .progress-close-row { text-align: right; margin-top: var(--space-3); }
 
     /* ===== Toast / Loading / 空狀態 ===== */
     .toast {
@@ -585,7 +558,7 @@
     </div>
   </div>
 
-  <!-- 底部動作列：有勾選或待送出草稿時滑出 -->
+  <!-- 底部動作列：有勾選駐站時滑出（登錄稽核流程） -->
   <div class="action-bar" id="action-bar">
     <div class="container">
       <span class="selected-info" id="selected-info"></span>
@@ -595,7 +568,6 @@
       <div class="bar-spacer">
         <button class="btn btn-ghost" id="btn-clear">清除勾選</button>
         <button class="btn btn-record" id="btn-record">登錄稽核紀錄</button>
-        <button class="btn btn-submit-plans" id="btn-submit-plans">送出確定分派</button>
       </div>
     </div>
   </div>
@@ -617,17 +589,17 @@
     <div class="modal">
       <div class="modal-header" id="assign-title"></div>
       <div class="modal-body">
-        <p>勾選稽核人員（可複選），並選擇預計稽核日期。</p>
+        <p>稽核人員與預計日期可分開設定，只填其中一項也可儲存。先排日期會立即建立行事曆預約，之後補人員時會修改同一筆預約。</p>
         <div class="auditor-list" id="auditor-list"></div>
         <div class="form-row">
-          <label for="assign-date">預計稽核日期</label>
+          <label for="assign-date">預計稽核日期（可留空）</label>
           <input type="date" id="assign-date">
         </div>
         <div class="form-error" id="assign-error"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-cancel" id="assign-cancel">取消</button>
-        <button class="btn btn-confirm" id="assign-save">儲存為待送出</button>
+        <button class="btn btn-confirm" id="assign-save">儲存分派</button>
       </div>
     </div>
   </div>
@@ -707,21 +679,6 @@
     </div>
   </div>
 
-  <!-- 劇場式進度 overlay -->
-  <div class="progress-overlay" id="progress-overlay">
-    <div class="progress-card">
-      <div class="title">送出稽核分派</div>
-      <div class="progress-track-lg"><div class="progress-fill-lg" id="theatrical-fill"></div></div>
-      <div class="progress-meta">
-        <span class="progress-stage" id="theatrical-stage">正在準備資料…</span>
-        <span class="progress-percent" id="theatrical-percent">0%</span>
-      </div>
-      <div class="progress-close-row hidden" id="progress-close-row">
-        <button class="btn btn-cancel" id="progress-close">關閉</button>
-      </div>
-    </div>
-  </div>
-
   <div class="toast" id="toast"></div>
 
   <div class="loading-overlay" id="loading">
@@ -749,7 +706,6 @@
     let currentTab = 'station';      // 'station' | 'center'
     const selectedCodes = new Set(); // 勾選中的駐站代碼（登錄稽核用）
     const expandedCodes = new Set(); // 成員名單展開中的駐站（重繪後保留）
-    const drafts = new Map();        // 待送出的分派草稿：code → {auditorEmails, auditorNames, plannedDate}
 
     const MODE_LABELS = {
       FIXED:   { cycleDone: '本週期已完成', progressTitle: '週期覆蓋進度' },
@@ -816,16 +772,12 @@
         .finally(function () { document.getElementById('loading').classList.add('hidden'); });
     }
 
-    /** 重載後清掉已不存在或已不適用的勾選與草稿 */
+    /** 重載後清掉已不存在或已不適用的勾選 */
     function pruneStaleSelections_() {
       const byCode = {};
       allStations().forEach(s => { byCode[s.code] = s; });
       Array.from(selectedCodes).forEach(function (code) {
         if (!byCode[code] || !isSelectable(byCode[code])) selectedCodes.delete(code);
-      });
-      // 草稿只對「今年候選」有效：送出成功或已被登錄稽核後自動移除
-      Array.from(drafts.keys()).forEach(function (code) {
-        if (!byCode[code] || byCode[code].evaluation.status !== 'CANDIDATE') drafts.delete(code);
       });
     }
 
@@ -945,7 +897,6 @@
       const ev = station.evaluation;
       const badge = statusBadge_(station);
       const selectable = isSelectable(station);
-      const draft = drafts.get(station.code) || null;
       const cardClasses = ['station-card', badge.card];
       if (station.isCertified) cardClasses.push('is-certified');
       if (selectedCodes.has(station.code)) cardClasses.push('is-selected');
@@ -970,26 +921,31 @@
       // 紀錄明細已移至歷年紀錄彈窗（點擊卡片開啟）；卡片僅保留滾動模式到期年提示
       const dueLine = dueText ? '<div class="history-line">' + dueText + '</div>' : '';
 
-      // 分派區塊：已送出（待稽核）> 草稿（待送出）> 可分派按鈕；
+      // 分派區塊：人員與日期可獨立設定，依完整度顯示三態；
       // 「補登紀錄」不限狀態，所有卡片皆可補登歷史
       let assignmentInfoHtml = '';
       const actionButtons = [];
-      if (station.assignment) {
-        assignmentInfoHtml =
-          '<div class="assignment-info">' +
-            '稽核人員：' + escapeHtml(station.assignment.auditorNames) +
-            '　<span class="date">' + escapeHtml(station.assignment.plannedDate) + '</span>' +
-          '</div>';
+      const a = station.assignment;
+      const hasAuditors = a && String(a.auditorNames || '').trim() !== '';
+      const hasDate = a && String(a.plannedDate || '').trim() !== '';
+      if (a && (hasAuditors || hasDate)) {
+        let infoClass, infoBody, mainBtnLabel;
+        if (hasAuditors && hasDate) {
+          infoClass = '';
+          infoBody = '稽核人員：' + escapeHtml(a.auditorNames) + '　<span class="date">' + escapeHtml(a.plannedDate) + '</span>';
+          mainBtnLabel = '修改';
+        } else if (hasDate) {
+          infoClass = ' draft';
+          infoBody = '<span class="badge badge-draft">待指派人員</span>　已排定 <span class="date">' + escapeHtml(a.plannedDate) + '</span>';
+          mainBtnLabel = '指派人員';
+        } else {
+          infoClass = ' draft';
+          infoBody = '<span class="badge badge-draft">待定日期</span>　稽核人員：' + escapeHtml(a.auditorNames);
+          mainBtnLabel = '排定日期';
+        }
+        assignmentInfoHtml = '<div class="assignment-info' + infoClass + '">' + infoBody + '</div>';
+        actionButtons.push('<button class="btn-sm btn-edit-draft" data-action="assign" data-code="' + escapeHtml(station.code) + '">' + mainBtnLabel + '</button>');
         actionButtons.push('<button class="btn-sm btn-remove" data-action="cancel-assignment" data-code="' + escapeHtml(station.code) + '">取消分派</button>');
-      } else if (draft) {
-        assignmentInfoHtml =
-          '<div class="assignment-info draft">' +
-            '<span class="badge badge-draft">待送出</span>　' +
-            escapeHtml(draft.auditorNames.join('、')) +
-            '　<span class="date">' + escapeHtml(draft.plannedDate) + '</span>' +
-          '</div>';
-        actionButtons.push('<button class="btn-sm btn-edit-draft" data-action="assign" data-code="' + escapeHtml(station.code) + '">修改</button>');
-        actionButtons.push('<button class="btn-sm btn-remove" data-action="remove-draft" data-code="' + escapeHtml(station.code) + '">移除草稿</button>');
       } else if (ev.status === 'CANDIDATE') {
         actionButtons.push('<button class="btn-sm btn-assign" data-action="assign" data-code="' + escapeHtml(station.code) + '">分派稽核</button>');
       }
@@ -1053,12 +1009,6 @@
           el.addEventListener('click', function () { openAssignModal(code); });
         } else if (action === 'backfill') {
           el.addEventListener('click', function () { openBackfillModal(code); });
-        } else if (action === 'remove-draft') {
-          el.addEventListener('click', function () {
-            drafts.delete(code);
-            renderSections();
-            updateActionBar();
-          });
         } else if (action === 'cancel-assignment') {
           el.addEventListener('click', function () { confirmCancelAssignment(code); });
         }
@@ -1136,12 +1086,25 @@
         : '尚無稽核紀錄';
       const missedWarn = ev.prevPeriodMissed ? '<span style="color:var(--color-danger)">　⚠ 上期未稽核</span>' : '';
 
-      // 排程資訊
-      const planHtml = !type.plan ? '' :
-        '<div class="assignment-info">排定 <span class="date">' + escapeHtml(type.plan.plannedDate) + '</span>　' +
-          escapeHtml(type.plan.auditorNames) +
-          (type.plan.reason ? '　<span class="date">' + escapeHtml(type.plan.reason) + '</span>' : '') +
-        '</div>';
+      // 排程資訊（人員／日期可獨立設定，依完整度顯示）
+      let planHtml = '';
+      if (type.plan) {
+        const pHasDate = String(type.plan.plannedDate || '').trim() !== '';
+        const pHasAuditors = String(type.plan.auditorNames || '').trim() !== '';
+        const reasonHtml = type.plan.reason ? '　<span class="date">' + escapeHtml(type.plan.reason) + '</span>' : '';
+        let pClass, pBody;
+        if (pHasDate && pHasAuditors) {
+          pClass = '';
+          pBody = '排定 <span class="date">' + escapeHtml(type.plan.plannedDate) + '</span>　' + escapeHtml(type.plan.auditorNames);
+        } else if (pHasDate) {
+          pClass = ' draft';
+          pBody = '<span class="badge badge-draft">待指派人員</span>　已排定 <span class="date">' + escapeHtml(type.plan.plannedDate) + '</span>';
+        } else {
+          pClass = ' draft';
+          pBody = '<span class="badge badge-draft">待定日期</span>　稽核人員：' + escapeHtml(type.plan.auditorNames);
+        }
+        planHtml = '<div class="assignment-info' + pClass + '">' + pBody + reasonHtml + '</div>';
+      }
 
       // 觸發事由清單（類型 7）
       let triggerHtml = '';
@@ -1297,17 +1260,17 @@
       document.getElementById('center-form-title').textContent =
         (isPlan ? '排定稽核 — ' : '登錄完成 — ') + type.name;
       document.getElementById('center-form-hint').textContent = isPlan
-        ? '排定後此項目狀態變為「待稽核」；重新排定會覆蓋原排程。'
+        ? '人員與日期可分開設定（至少一項）；先排日期會立即建立行事曆預約，之後補人員會修改同一筆。重新排定會覆蓋原排程。'
         : '登錄實際完成日期（選過去日期即為補登歷史）；完成後若有排程將自動清除。';
-      document.getElementById('center-form-date-label').textContent = isPlan ? '預定稽核日期' : '實際稽核日期';
+      document.getElementById('center-form-date-label').textContent = isPlan ? '預定稽核日期（可留空）' : '實際稽核日期';
       document.getElementById('center-form-auditor-label').textContent =
-        isPlan ? '稽核人員（可複選，必填）' : '稽核人員（可複選，補登歷史可留空）';
+        isPlan ? '稽核人員（可複選，可留空）' : '稽核人員（可複選，補登歷史可留空）';
 
       // 預設值：排定＝沿用既有排程；登錄＝今天＋既有排程人員
       const existing = type.plan;
       const preChecked = new Set(existing ? String(existing.auditorEmails).split(',').filter(Boolean) : []);
       document.getElementById('center-auditor-list').innerHTML = dashboard.auditors.length === 0
-        ? '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的組員），請先確認人員職務配置。</label>'
+        ? '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的稽核員），請先確認人員職務配置。</label>'
         : dashboard.auditors.map(function (a) {
             return '<label><input type="checkbox" value="' + escapeHtml(a.email) + '"' +
               (preChecked.has(a.email) ? ' checked' : '') + '>' +
@@ -1352,8 +1315,11 @@
       const dateValue = document.getElementById('center-form-date').value;
       const reason = document.getElementById('center-form-reason').value.trim();
 
-      if (!dateValue) { errorEl.textContent = '請選擇日期。'; return; }
-      if (isPlan && checked.length === 0) { errorEl.textContent = '排定稽核需至少勾選一位稽核人員。'; return; }
+      if (isPlan) {
+        if (!dateValue && checked.length === 0) { errorEl.textContent = '請至少設定稽核人員或預定日期其中一項。'; return; }
+      } else {
+        if (!dateValue) { errorEl.textContent = '請選擇日期。'; return; }
+      }
 
       const dateText = dateValue.replace(/-/g, '/');
       const typeId = centerFormState.typeId;
@@ -1490,7 +1456,7 @@
     }
 
     // =============================================
-    // 分派流程：草稿 → 批次送出
+    // 分派流程：人員／日期可獨立設定，存檔即立即寫入
     // =============================================
     let assigningCode = null; // 分派 modal 目前操作的駐站
 
@@ -1498,20 +1464,22 @@
       const station = allStations().find(s => s.code === stationCode);
       if (!station) return;
       assigningCode = stationCode;
-      const draft = drafts.get(stationCode);
-      const checkedEmails = new Set(draft ? draft.auditorEmails : []);
+      const a = station.assignment;
+      const existingEmails = new Set(
+        a && a.auditorEmails ? String(a.auditorEmails).split(',').map(e => e.trim()).filter(Boolean) : []
+      );
 
       document.getElementById('assign-title').textContent = '分派稽核 — ' + station.name;
       document.getElementById('auditor-list').innerHTML = dashboard.auditors.length === 0
         ? '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的組員），請先確認人員職務配置。</label>'
-        : dashboard.auditors.map(function (a) {
-            return '<label><input type="checkbox" value="' + escapeHtml(a.email) + '"' +
-              (checkedEmails.has(a.email) ? ' checked' : '') + '>' +
-              '<span>' + escapeHtml(a.name) + '</span><span class="email">' + escapeHtml(a.email) + '</span></label>';
+        : dashboard.auditors.map(function (au) {
+            return '<label><input type="checkbox" value="' + escapeHtml(au.email) + '"' +
+              (existingEmails.has(au.email) ? ' checked' : '') + '>' +
+              '<span>' + escapeHtml(au.name) + '</span><span class="email">' + escapeHtml(au.email) + '</span></label>';
           }).join('');
 
       // date input 需要 yyyy-MM-dd；後端與顯示用 yyyy/MM/dd，存取時轉換
-      document.getElementById('assign-date').value = draft ? draft.plannedDate.replace(/\//g, '-') : '';
+      document.getElementById('assign-date').value = a && a.plannedDate ? a.plannedDate.replace(/\//g, '-') : '';
       document.getElementById('assign-error').textContent = '';
       document.getElementById('assign-overlay').classList.add('open');
     }
@@ -1533,19 +1501,21 @@
         .map(el => el.value);
       const dateValue = document.getElementById('assign-date').value; // yyyy-MM-dd
 
-      if (checked.length === 0) { errorEl.textContent = '請至少勾選一位稽核人員。'; return; }
-      if (!dateValue) { errorEl.textContent = '請選擇預計稽核日期。'; return; }
+      if (checked.length === 0 && !dateValue) {
+        errorEl.textContent = '請至少設定稽核人員或預計稽核日期其中一項。';
+        return;
+      }
 
-      const emailToName = {};
-      dashboard.auditors.forEach(a => { emailToName[a.email] = a.name; });
-      drafts.set(assigningCode, {
-        auditorEmails: checked,
-        auditorNames: checked.map(email => emailToName[email] || email),
-        plannedDate: dateValue.replace(/-/g, '/'),
-      });
-      closeAssignModal();
-      renderSections();
-      updateActionBar();
+      const btn = this;
+      btn.disabled = true;
+      callServer('saveStationAssignment', assigningCode, dashboard.currentYear, checked, dateValue.replace(/-/g, '/'))
+        .then(function (result) {
+          showToast(result.message, false);
+          closeAssignModal();
+          loadDashboard();
+        })
+        .catch(function (err) { errorEl.textContent = err.message; })
+        .finally(function () { btn.disabled = false; });
     });
 
     // =============================================
@@ -1834,42 +1804,6 @@
       return { start: start, end: start + LENGTH - 1 };
     }
 
-    function confirmSubmitAssignments() {
-      const items = Array.from(drafts.entries());
-      const byCode = {};
-      allStations().forEach(s => { byCode[s.code] = s; });
-      openModal({
-        title: '送出 ' + dashboard.currentYear + ' 年稽核分派',
-        bodyHtml:
-          '<p>以下 ' + items.length + ' 間駐站的分派將寫入「稽核分派」工作表，狀態變更為<strong>待稽核</strong>：</p>' +
-          '<ul>' + items.map(function (entry) {
-            const station = byCode[entry[0]];
-            return '<li>' + escapeHtml(station ? station.name : entry[0]) +
-              '：' + escapeHtml(entry[1].auditorNames.join('、')) +
-              ' <span class="mono">' + escapeHtml(entry[1].plannedDate) + '</span></li>';
-          }).join('') + '</ul>',
-        confirmLabel: '送出確定分派',
-        danger: false,
-        onConfirm: function () { return submitDrafts_(); },
-      });
-    }
-
-    function submitDrafts_() {
-      const assignmentList = Array.from(drafts.entries()).map(function (entry) {
-        return { stationCode: entry[0], auditorEmails: entry[1].auditorEmails, plannedDate: entry[1].plannedDate };
-      });
-      const progress = startTheatricalProgress();
-      return callServer('submitAssignments', assignmentList, dashboard.currentYear)
-        .then(function (result) {
-          progress.finish('分派完成', function () {
-            showToast(result.message, false);
-            drafts.clear();
-            loadDashboard();
-          });
-        })
-        .catch(function (err) { progress.fail(err.message); });
-    }
-
     function confirmCancelAssignment(stationCode) {
       const station = allStations().find(s => s.code === stationCode);
       openModal({
@@ -1890,86 +1824,6 @@
     }
 
     // =============================================
-    // 劇場式進度條：5 秒推進到 90%，後端完成後補到 100%
-    // =============================================
-    const PROGRESS_STAGES = [
-      { until: 25,  text: '正在驗證駐站與人員資料…' },
-      { until: 55,  text: '正在寫入稽核分派…' },
-      { until: 80,  text: '正在同步至試算表…' },
-      { until: 100, text: '正在更新駐站狀態…' },
-    ];
-
-    function startTheatricalProgress() {
-      const overlay = document.getElementById('progress-overlay');
-      const fill = document.getElementById('theatrical-fill');
-      const stageEl = document.getElementById('theatrical-stage');
-      const percentEl = document.getElementById('theatrical-percent');
-      const closeRow = document.getElementById('progress-close-row');
-
-      fill.className = 'progress-fill-lg';
-      stageEl.className = 'progress-stage';
-      closeRow.classList.add('hidden');
-      overlay.classList.add('open');
-
-      let percent = 0;
-      const TARGET = 90, DURATION_MS = 5000, STEP_MS = 250;
-      const startedAt = Date.now();
-
-      function paint() {
-        fill.style.width = percent + '%';
-        percentEl.textContent = Math.round(percent) + '%';
-        const stage = PROGRESS_STAGES.find(s => percent < s.until) || PROGRESS_STAGES[PROGRESS_STAGES.length - 1];
-        stageEl.textContent = stage.text;
-      }
-      paint();
-
-      // 以實際經過時間推算百分比（而非固定步進）：
-      // 瀏覽器在背景分頁會將計時器節流到 1 次/秒，步進制會讓 5 秒的節奏失真
-      const timer = setInterval(function () {
-        if (percent >= TARGET) return; // 停在 90%，等後端回應
-        const elapsed = Date.now() - startedAt;
-        percent = Math.min(TARGET, (elapsed / DURATION_MS) * TARGET);
-        paint();
-      }, STEP_MS);
-
-      // 完成需同時滿足「後端已回應」與「進度已演到 90%」，維持完整的處理感
-      function complete(message, afterClose) {
-        clearInterval(timer);
-        percent = 100;
-        fill.style.width = '100%';
-        fill.classList.add('success');
-        percentEl.textContent = '100%';
-        stageEl.textContent = message;
-        setTimeout(function () {
-          overlay.classList.remove('open');
-          if (afterClose) afterClose();
-        }, 900);
-      }
-
-      return {
-        finish: function (message, afterClose) {
-          const wait = setInterval(function () {
-            if (percent >= TARGET) {
-              clearInterval(wait);
-              complete(message, afterClose);
-            }
-          }, 120);
-        },
-        fail: function (errorMessage) {
-          clearInterval(timer);
-          fill.classList.add('error');
-          stageEl.className = 'progress-stage error';
-          stageEl.textContent = '送出失敗：' + errorMessage;
-          closeRow.classList.remove('hidden');
-        },
-      };
-    }
-
-    document.getElementById('progress-close').addEventListener('click', function () {
-      document.getElementById('progress-overlay').classList.remove('open');
-    });
-
-    // =============================================
     // 底部動作列與登錄流程
     // =============================================
     function renderYearOptions() {
@@ -1986,21 +1840,14 @@
     function updateActionBar() {
       const bar = document.getElementById('action-bar');
       const hasSelection = selectedCodes.size > 0;
-      const hasDrafts = drafts.size > 0;
       // 動作列屬於駐站流程，切到中心分頁時收起避免誤導
-      bar.classList.toggle('visible', currentTab === 'station' && (hasSelection || hasDrafts));
+      bar.classList.toggle('visible', currentTab === 'station' && hasSelection);
 
-      const parts = [];
-      if (hasSelection) parts.push('已勾選 ' + selectedCodes.size + ' 間');
-      if (hasDrafts) parts.push('待送出分派 ' + drafts.size + ' 間');
-      document.getElementById('selected-info').textContent = parts.join('　·　');
+      document.getElementById('selected-info').textContent = hasSelection ? '已勾選 ' + selectedCodes.size + ' 間' : '';
 
       document.getElementById('btn-record').classList.toggle('hidden', !hasSelection);
       document.getElementById('btn-clear').classList.toggle('hidden', !hasSelection);
       document.getElementById('year-select-wrap').classList.toggle('hidden', !hasSelection);
-      const submitBtn = document.getElementById('btn-submit-plans');
-      submitBtn.classList.toggle('hidden', !hasDrafts);
-      submitBtn.textContent = '送出確定分派 ' + drafts.size + ' 間';
     }
 
     function confirmRecordAudits() {
@@ -2082,7 +1929,6 @@
     });
 
     document.getElementById('btn-record').addEventListener('click', confirmRecordAudits);
-    document.getElementById('btn-submit-plans').addEventListener('click', confirmSubmitAssignments);
     document.getElementById('btn-clear').addEventListener('click', function () {
       selectedCodes.clear();
       renderSections();
@@ -2161,24 +2007,39 @@
         if (idx >= 0) state.records.splice(idx, 1);
         return Promise.resolve({ message: '【預覽模式】已刪除紀錄' });
       }
-      if (fnName === 'submitAssignments') {
+      if (fnName === 'saveStationAssignment') {
         const emailToName = {};
         auditors.forEach(a => { emailToName[a.email] = a.name; });
-        return new Promise(function (resolve) {
-          setTimeout(function () {
-            args[0].forEach(function (item) {
-              state.assignments = state.assignments.filter(p => !(p.stationCode === item.stationCode && p.year === args[1]));
-              state.assignments.push({
-                stationCode: item.stationCode, year: args[1],
-                auditorNames: item.auditorEmails.map(e => emailToName[e] || e).join('、'),
-                auditorEmails: item.auditorEmails.join(','),
-                plannedDate: item.plannedDate,
-                calendarEventId: 'mock-evt-' + Date.now(),
-              });
-            });
-            resolve({ saved: args[0].length, message: '【預覽模式】已送出 ' + args[0].length + ' 間駐站的稽核分派，已同步行事曆' });
-          }, 1600);
+        const code = args[0], yr = args[1];
+        const emails = (args[2] || []).filter(Boolean);
+        const date = String(args[3] || '').trim();
+        if (emails.length === 0 && !date) {
+          return Promise.reject(new Error('請至少設定稽核人員或預計稽核日期其中一項'));
+        }
+        const existing = state.assignments.find(p => p.stationCode === code && p.year === yr);
+        const oldEventId = existing ? existing.calendarEventId : '';
+        let eventId = oldEventId || '';
+        let calMsg = '';
+        if (date) {
+          if (oldEventId) { eventId = oldEventId; calMsg = '，已更新同一日曆事件（' + eventId + '）'; }
+          else { eventId = 'mock-evt-' + Date.now(); calMsg = '，已建立日曆預約（' + eventId + '）'; }
+        } else {
+          if (oldEventId) calMsg = '，已移除原日曆事件';
+          eventId = '';
+        }
+        state.assignments = state.assignments.filter(p => !(p.stationCode === code && p.year === yr));
+        state.assignments.push({
+          stationCode: code, year: yr,
+          auditorNames: emails.map(e => emailToName[e] || e).join('、'),
+          auditorEmails: emails.join(','),
+          plannedDate: date,
+          calendarEventId: eventId,
         });
+        let msg;
+        if (date && emails.length > 0) msg = '【預覽模式】已分派 ' + code + calMsg;
+        else if (date) msg = '【預覽模式】已排定日期（待指派人員）' + calMsg;
+        else msg = '【預覽模式】已指派人員（待定日期，僅寫入試算表，尚未進日曆）';
+        return Promise.resolve({ message: msg });
       }
       if (fnName === 'cancelAssignment') {
         state.assignments = state.assignments.filter(p => !(p.stationCode === args[0] && p.year === args[1]));
@@ -2189,9 +2050,26 @@
       const typeNameOf = id => (AUDIT_TYPE_DEFS.find(t => t.id === id) || {}).name || id;
       const auditorNamesOf = emails => emails.map(e => (auditors.find(a => a.email === e) || { name: e }).name).join('、');
       if (fnName === 'planCenterAudit') {
+        const emails = (args[1] || []).filter(Boolean);
+        const date = String(args[2] || '').trim();
+        if (emails.length === 0 && !date) {
+          return Promise.reject(new Error('請至少設定稽核人員或預定日期其中一項'));
+        }
+        const existing = state.centerPlans.find(p => p.typeId === args[0]);
+        const oldEventId = existing ? existing.calendarEventId : '';
+        let eventId = oldEventId || '';
+        let calMsg = '';
+        if (date) {
+          if (oldEventId) { eventId = oldEventId; calMsg = '，已更新同一日曆事件（' + eventId + '）'; }
+          else { eventId = 'mock-evt-' + Date.now(); calMsg = '，已建立日曆預約（' + eventId + '）'; }
+        } else { eventId = ''; if (oldEventId) calMsg = '，已移除原日曆事件'; }
         state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]);
-        state.centerPlans.push({ typeId: args[0], plannedDate: args[2], auditorNames: auditorNamesOf(args[1]), auditorEmails: args[1].join(','), reason: args[3] || '', calendarEventId: 'mock-evt-' + Date.now() });
-        return Promise.resolve({ message: '【預覽模式】已排定「' + typeNameOf(args[0]) + '」於 ' + args[2] + ' 稽核，已同步行事曆' });
+        state.centerPlans.push({ typeId: args[0], plannedDate: date, auditorNames: auditorNamesOf(emails), auditorEmails: emails.join(','), reason: args[3] || '', calendarEventId: eventId });
+        let msg;
+        if (date && emails.length > 0) msg = '【預覽模式】已排定「' + typeNameOf(args[0]) + '」於 ' + date + ' 稽核' + calMsg;
+        else if (date) msg = '【預覽模式】已為「' + typeNameOf(args[0]) + '」排定日期（待指派人員）' + calMsg;
+        else msg = '【預覽模式】已為「' + typeNameOf(args[0]) + '」指派人員（待定日期，尚未進日曆）';
+        return Promise.resolve({ message: msg });
       }
       if (fnName === 'cancelCenterPlan') {
         state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]);

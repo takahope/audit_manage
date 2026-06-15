@@ -138,7 +138,7 @@ function getStationMembersMap() {
 /**
  * 取得稽核人員名單。
  *
- * 判定條件：人員職務配置中「所屬組別代碼 = TF-ISPI-GRP-AUDIT 且 職稱 = 組員」。
+ * 判定條件：人員職務配置中「所屬組別代碼 = TF-ISPI-GRP-AUDIT 且 職稱 = 稽核員」。
  * 條件集中於 isAuditor_，未來規則改變（如增列組長）只需改一處。
  *
  * @returns {Array<{name, email}>}

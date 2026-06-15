@@ -256,80 +256,80 @@ function setCycleMode(mode) {
 // =============================================
 
 /**
- * 批次送出稽核分派（前端草稿一次確認後呼叫）。
+ * 儲存單一駐站的稽核分派——人員與日期可獨立設定（至少一項），每次呼叫立即寫入。
  *
- * @param {Array<{stationCode: string, auditorEmails: string[], plannedDate: string}>} assignmentList
+ * 行事曆策略（複用同一筆預約）：
+ * - 有日期：建立或更新同一事件（無人員時標題附「待指派人員」）。
+ * - 無日期但既有事件存在（使用者清掉日期）：刪除事件、清空 eventId。
+ * - 無日期且無事件（僅人員）：先只寫入試算表，待日期確定再進日曆。
+ *
+ * @param {string} stationCode
  * @param {number} year - 稽核年度（西元）
+ * @param {string[]} auditorEmails - 可空
+ * @param {string} plannedDate - yyyy/MM/dd，可空
  * @returns {string} JSON 回應
  */
-function submitAssignments(assignmentList, year) {
+function saveStationAssignment(stationCode, year, auditorEmails, plannedDate) {
   try {
-    if (!Array.isArray(assignmentList) || assignmentList.length === 0) {
-      return errorResponse_('沒有任何待送出的分派，請先為候選駐站設定稽核人員與日期');
-    }
     const auditYear = Number(year);
     if (!isValidAuditYear_(auditYear)) {
       return errorResponse_('稽核年度 ' + year + ' 超出可登錄範圍，請確認年度後重試');
     }
+    const station = getStations().find(s => s.code === stationCode);
+    if (!station) return errorResponse_('找不到駐站：' + stationCode + '，請重新整理後再試');
 
-    const stationByCode = {};
-    getStations().forEach(s => { stationByCode[s.code] = s; });
-    const auditorByEmail = {};
-    getAuditors().forEach(a => { auditorByEmail[a.email] = a; });
+    const emails = Array.isArray(auditorEmails) ? auditorEmails.filter(e => String(e || '').trim()) : [];
+    const dateText = String(plannedDate || '').trim();
+    const hasDate = dateText !== '';
+    if (emails.length === 0 && !hasDate) {
+      return errorResponse_('請至少設定稽核人員或預計稽核日期其中一項');
+    }
+    if (hasDate && !isValidPlannedDate_(dateText)) {
+      return errorResponse_('預計稽核日期格式錯誤，請使用 yyyy/MM/dd');
+    }
+    const auditors = emails.length > 0 ? lookupAuditors_(emails) : [];
 
-    const entries = [];
-    for (let i = 0; i < assignmentList.length; i++) {
-      const item = assignmentList[i];
-      const station = stationByCode[item.stationCode];
-      if (!station) {
-        return errorResponse_('找不到駐站：' + item.stationCode + '，請重新整理後再試');
-      }
-      if (!Array.isArray(item.auditorEmails) || item.auditorEmails.length === 0) {
-        return errorResponse_(station.name + ' 尚未選擇稽核人員');
-      }
-      if (!isValidPlannedDate_(item.plannedDate)) {
-        return errorResponse_(station.name + ' 的預計稽核日期格式錯誤，請使用 yyyy/MM/dd');
-      }
+    const oldPlan = getAssignments().find(p => p.stationCode === stationCode && p.year === auditYear);
+    const oldEventId = oldPlan ? oldPlan.calendarEventId : '';
 
-      const auditors = item.auditorEmails.map(function (email) {
-        const auditor = auditorByEmail[String(email || '').trim().toLowerCase()];
-        if (!auditor) throw new Error('「' + email + '」不在稽核人員名單中，請重新整理後再試');
-        return auditor;
-      });
-
-      entries.push({
-        stationCode: station.code,
-        stationName: station.name,
-        year: auditYear,
-        auditorNames: auditors.map(a => a.name).join('、'),
-        auditorEmails: auditors.map(a => a.email).join(','),
-        plannedDate: item.plannedDate,
-      });
+    // 行事曆同步
+    const calendarWarnings = [];
+    let calendarEventId = oldEventId || '';
+    if (hasDate) {
+      const sync = syncCalendarUpsert_(
+        oldEventId,
+        '【稽核】' + station.name + (auditors.length === 0 ? '（待指派人員）' : ''),
+        dateText,
+        '駐站代碼：' + station.code + '\n稽核年度：' + auditYear +
+          '\n稽核人員：' + (auditors.length === 0 ? '（待指派）' : auditors.map(a => a.name).join('、')) +
+          '\n（由稽核駐站分配系統建立）',
+        auditors.map(a => a.email)
+      );
+      calendarEventId = sync.eventId;
+      calendarWarnings.push(sync.warning);
+    } else if (oldEventId) {
+      // 既有事件但這次清掉日期 → 移除事件
+      calendarWarnings.push(syncCalendarDelete_(oldEventId));
+      calendarEventId = '';
     }
 
-    // 行事曆同步：重新分派先刪舊事件，再為每站建立整日事件（邀請稽核人員）
-    const calendarWarnings = [];
-    const existingPlans = getAssignments();
-    entries.forEach(function (entry) {
-      const oldPlan = existingPlans.find(p => p.stationCode === entry.stationCode && p.year === entry.year);
-      if (oldPlan && oldPlan.calendarEventId) {
-        calendarWarnings.push(syncCalendarDelete_(oldPlan.calendarEventId));
-      }
-      const created = syncCalendarCreate_(
-        '【稽核】' + entry.stationName,
-        entry.plannedDate,
-        '駐站代碼：' + entry.stationCode + '\n稽核年度：' + entry.year +
-          '\n稽核人員：' + entry.auditorNames + '\n（由稽核駐站分配系統建立）',
-        entry.auditorEmails.split(',')
-      );
-      entry.calendarEventId = created.eventId;
-      calendarWarnings.push(created.warning);
-    });
+    saveAssignments([{
+      stationCode: station.code,
+      stationName: station.name,
+      year: auditYear,
+      auditorNames: auditors.map(a => a.name).join('、'),
+      auditorEmails: auditors.map(a => a.email).join(','),
+      plannedDate: hasDate ? dateText : '',
+      calendarEventId: calendarEventId,
+    }], Session.getActiveUser().getEmail() || '');
 
-    const result = saveAssignments(entries, Session.getActiveUser().getEmail() || '');
+    let statusMsg;
+    if (hasDate && auditors.length > 0) statusMsg = '已分派 ' + station.name + '：' + auditors.map(a => a.name).join('、') + ' 於 ' + dateText;
+    else if (hasDate) statusMsg = '已為 ' + station.name + ' 排定 ' + dateText + '（待指派人員）';
+    else statusMsg = '已為 ' + station.name + ' 指派人員（待定日期，尚未寫入行事曆）';
+
     return successResponse_({
-      saved: result.saved,
-      message: '已送出 ' + result.saved + ' 間駐站的 ' + auditYear + ' 年稽核分派' + calendarSyncSuffix_(calendarWarnings),
+      message: statusMsg + (hasDate ? calendarSyncSuffix_(calendarWarnings) : ''),
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -384,43 +384,58 @@ function planCenterAudit(typeId, auditorEmails, plannedDate, reason) {
   try {
     const typeDef = findCenterTypeDef_(typeId);
     if (!typeDef) return errorResponse_('未知的稽核項目：' + typeId + '，請重新整理後再試');
-    if (!Array.isArray(auditorEmails) || auditorEmails.length === 0) {
-      return errorResponse_('尚未選擇稽核人員，請至少勾選一位');
+
+    const emails = Array.isArray(auditorEmails) ? auditorEmails.filter(e => String(e || '').trim()) : [];
+    const dateText = String(plannedDate || '').trim();
+    const hasDate = dateText !== '';
+    if (emails.length === 0 && !hasDate) {
+      return errorResponse_('請至少設定稽核人員或預定日期其中一項');
     }
-    if (!isValidPlannedDate_(plannedDate)) {
+    if (hasDate && !isValidPlannedDate_(dateText)) {
       return errorResponse_('預定日期格式錯誤，請使用 yyyy/MM/dd');
     }
+    const auditors = emails.length > 0 ? lookupAuditors_(emails) : [];
 
-    const auditors = lookupAuditors_(auditorEmails);
-
-    // 行事曆同步：重新排定先刪舊事件，再建新事件（邀請稽核人員）
-    const calendarWarnings = [];
     const oldPlan = getCenterPlans().find(p => p.typeId === typeId);
-    if (oldPlan && oldPlan.calendarEventId) {
-      calendarWarnings.push(syncCalendarDelete_(oldPlan.calendarEventId));
+    const oldEventId = oldPlan ? oldPlan.calendarEventId : '';
+
+    // 行事曆同步（複用同一筆預約）
+    const calendarWarnings = [];
+    let calendarEventId = oldEventId || '';
+    if (hasDate) {
+      const sync = syncCalendarUpsert_(
+        oldEventId,
+        '【稽核】' + typeDef.name + (auditors.length === 0 ? '（待指派人員）' : ''),
+        dateText,
+        '稽核項目：' + typeDef.name + '（' + typeDef.freqLabel + '）' +
+          '\n稽核人員：' + (auditors.length === 0 ? '（待指派）' : auditors.map(a => a.name).join('、')) +
+          (reason ? '\n事由：' + reason : '') + '\n（由稽核駐站分配系統建立）',
+        auditors.map(a => a.email)
+      );
+      calendarEventId = sync.eventId;
+      calendarWarnings.push(sync.warning);
+    } else if (oldEventId) {
+      calendarWarnings.push(syncCalendarDelete_(oldEventId));
+      calendarEventId = '';
     }
-    const created = syncCalendarCreate_(
-      '【稽核】' + typeDef.name,
-      plannedDate,
-      '稽核項目：' + typeDef.name + '（' + typeDef.freqLabel + '）' +
-        '\n稽核人員：' + auditors.map(a => a.name).join('、') +
-        (reason ? '\n事由：' + reason : '') + '\n（由稽核駐站分配系統建立）',
-      auditors.map(a => a.email)
-    );
-    calendarWarnings.push(created.warning);
 
     saveCenterPlan({
       typeId: typeDef.id,
       typeName: typeDef.name,
-      plannedDate: plannedDate,
+      plannedDate: hasDate ? dateText : '',
       auditorNames: auditors.map(a => a.name).join('、'),
       auditorEmails: auditors.map(a => a.email).join(','),
       reason: reason || '',
-      calendarEventId: created.eventId,
+      calendarEventId: calendarEventId,
     }, Session.getActiveUser().getEmail() || '');
 
+    let statusMsg;
+    if (hasDate && auditors.length > 0) statusMsg = '已排定「' + typeDef.name + '」於 ' + dateText + ' 稽核';
+    else if (hasDate) statusMsg = '已為「' + typeDef.name + '」排定 ' + dateText + '（待指派人員）';
+    else statusMsg = '已為「' + typeDef.name + '」指派人員（待定日期，尚未寫入行事曆）';
+
     return successResponse_({
-      message: '已排定「' + typeDef.name + '」於 ' + plannedDate + ' 稽核' + calendarSyncSuffix_(calendarWarnings),
+      message: statusMsg + (hasDate ? calendarSyncSuffix_(calendarWarnings) : ''),
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -585,6 +600,24 @@ function syncCalendarCreate_(title, dateText, description, guestEmails) {
     return { eventId: createAuditCalendarEvent(title, dateText, description, guestEmails), warning: '' };
   } catch (error) {
     return { eventId: '', warning: '（行事曆同步失敗：' + error.message + '）' };
+  }
+}
+
+/**
+ * 建立或更新行事曆事件（複用同一筆預約）。
+ * 有 eventId 先嘗試更新；事件已不存在則改建立新事件；無 eventId 直接建立。
+ * 失敗時回空 eventId 與警告文字（優雅降級，不阻擋 Sheet 寫入）。
+ */
+function syncCalendarUpsert_(eventId, title, dateText, description, guestEmails) {
+  try {
+    if (String(eventId || '').trim()) {
+      const updated = updateAuditCalendarEvent(eventId, title, dateText, description, guestEmails);
+      if (updated) return { eventId: updated, warning: '' };
+      // 事件已被手動刪除 → fallback 建立新事件
+    }
+    return { eventId: createAuditCalendarEvent(title, dateText, description, guestEmails), warning: '' };
+  } catch (error) {
+    return { eventId: String(eventId || ''), warning: '（行事曆同步失敗：' + error.message + '）' };
   }
 }
 

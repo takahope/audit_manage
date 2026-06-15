@@ -59,7 +59,7 @@ const ENV = {
    */
   AUDIT_TEAM: {
     ORG_CODE: 'TF-ISPI-GRP-AUDIT',
-    MEMBER_TITLE: '組員',
+    MEMBER_TITLE: '稽核員',
   },
 
   /** HR 資料快取秒數（駐站清單異動頻率低，5 分鐘內重複讀取走快取） */

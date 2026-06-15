@@ -44,11 +44,15 @@ const STATION_STATUS = {
  * 認證駐站與一般駐站的差異全部集中在這裡，
  * 前端與 API 層只消費結果，不重複實作規則。
  *
+ * 認證／一般駐站在此採同一套「本輪覆蓋」判定，差異只在呼叫端傳入的 cycle 長度
+ * （認證站傳兩年排程輪、一般站傳三年週期），不再有「每年必稽」特例。
+ *
  * @param {{code: string, isCertified: boolean}} station
  * @param {number[]} auditYears - 該站所有稽核紀錄的年份（不需排序）
  * @param {number} currentYear
  * @param {{start: number, end: number, years: number[]}} cycle - getCycleForYear 的結果
  * @param {string} [mode='FIXED'] - 'FIXED' 固定區段 / 'ROLLING' 滾動式
+ * @param {number} [validityYears=3] - 滾動模式的到期年距（認證站排程傳 2）
  * @returns {{
  *   auditedThisYear: boolean,
  *   countedInCycle: boolean,
@@ -59,9 +63,9 @@ const STATION_STATUS = {
  *   cycleAuditYears: number[]
  * }}
  */
-function evaluateStation(station, auditYears, currentYear, cycle, mode) {
+function evaluateStation(station, auditYears, currentYear, cycle, mode, validityYears) {
   if (mode === 'ROLLING') {
-    return evaluateStationRolling_(station, auditYears, currentYear);
+    return evaluateStationRolling_(station, auditYears, currentYear, validityYears);
   }
 
   const cycleAuditYears = auditYears
@@ -69,24 +73,11 @@ function evaluateStation(station, auditYears, currentYear, cycle, mode) {
     .sort((a, b) => a - b);
 
   const auditedThisYear = auditYears.indexOf(currentYear) !== -1;
-  // 「計入週期」= 週期內最早的一筆；認證駐站之後年度的紀錄不再計入
+  // 「計入週期」= 本輪內最早的一筆；同一輪內重複稽核不再計入（去重）
   const countedYear = cycleAuditYears.length > 0 ? cycleAuditYears[0] : null;
   const countedInCycle = countedYear !== null;
 
-  if (station.isCertified) {
-    // 認證駐站：每年必稽，今年沒稽核就是候選，與週期覆蓋無關
-    return {
-      auditedThisYear: auditedThisYear,
-      countedInCycle: countedInCycle,
-      countedYear: countedYear,
-      dueYear: null,
-      isCandidate: !auditedThisYear,
-      status: auditedThisYear ? STATION_STATUS.AUDITED_THIS_YEAR : STATION_STATUS.CANDIDATE,
-      cycleAuditYears: cycleAuditYears,
-    };
-  }
-
-  // 一般駐站：週期內稽核過一次即完成本輪
+  // 認證與一般共用：本輪稽核過一次即完成本輪
   let status;
   if (auditedThisYear) status = STATION_STATUS.AUDITED_THIS_YEAR;
   else if (countedInCycle) status = STATION_STATUS.CYCLE_DONE;
@@ -104,40 +95,61 @@ function evaluateStation(station, auditYears, currentYear, cycle, mode) {
 }
 
 /**
+ * 依駐站類型套用對應週期，產出供前端／summary 消費的單一 evaluation。
+ *
+ * - 一般站：只用三年總覽週期；scheduleCovered 等同 countedInCycle。
+ * - 認證站：算兩份 —— 三年總覽（取 countedInCycle/countedYear 供覆蓋率，去重）＋
+ *   兩年排程輪（取 status/isCandidate/dueYear 供卡片狀態與建議）。
+ *   如此認證站在三年週期內已稽過就算覆蓋（第三年不重複），
+ *   但兩年新一輪仍會被排入年度建議。
+ *
+ * @param {{code: string, isCertified: boolean}} station
+ * @param {number[]} auditYears
+ * @param {number} currentYear
+ * @param {{start, end}} normalCycle - 三年總覽週期
+ * @param {{start, end}} certifiedCycle - 兩年排程輪
+ * @param {string} [mode='FIXED']
+ * @returns {Object} 單一 evaluation，含 countedInCycle（三年）與 scheduleCovered（排程輪）
+ */
+function evaluateStationFor_(station, auditYears, currentYear, normalCycle, certifiedCycle, mode) {
+  const triEval = evaluateStation(station, auditYears, currentYear, normalCycle, mode, 3);
+  if (!station.isCertified) {
+    triEval.scheduleCovered = triEval.countedInCycle;
+    return triEval;
+  }
+  const biEval = evaluateStation(station, auditYears, currentYear, certifiedCycle, mode, 2);
+  // 卡片狀態／候選／到期年用兩年排程輪；覆蓋率欄位用三年總覽（去重）
+  biEval.countedInCycle = triEval.countedInCycle;
+  biEval.countedYear = triEval.countedYear;
+  biEval.scheduleCovered = (biEval.status === STATION_STATUS.AUDITED_THIS_YEAR || biEval.status === STATION_STATUS.CYCLE_DONE);
+  return biEval;
+}
+
+/**
  * 滾動模式的駐站狀態計算。
  *
- * 規則：每站以「上次稽核年＋3」為到期年（2026 稽核 → 2029 起再次成為候選）；
- * 從未稽核過 = 立即候選。認證駐站不受模式影響，仍為每年必稽。
+ * 規則：每站以「上次稽核年＋效期」為到期年（一般站 +3、認證站排程 +2）；
+ * 從未稽核過 = 立即候選。認證／一般採同一套邏輯，差異只在 validityYears。
  *
- * countedInCycle 在滾動模式下的語意是「目前在三年效期內」
- * （近三年含今年有紀錄），供覆蓋率與建議數共用同一欄位名稱，
+ * countedInCycle 在滾動模式下的語意是「目前在效期內」
+ * （近 validityYears 年含今年有紀錄），供覆蓋率與建議數共用同一欄位名稱，
  * 讓前端與 summary 不需要分流。
  *
  * @param {{code: string, isCertified: boolean}} station
  * @param {number[]} auditYears
  * @param {number} currentYear
+ * @param {number} [validityYears=3] - 到期年距（認證站排程傳 2）
  * @returns {Object} 結構與 evaluateStation 固定模式相同，另含 dueYear
  */
-function evaluateStationRolling_(station, auditYears, currentYear) {
+function evaluateStationRolling_(station, auditYears, currentYear, validityYears) {
+  const validity = validityYears || 3;
   const sorted = auditYears.slice().sort((a, b) => a - b);
   const auditedThisYear = auditYears.indexOf(currentYear) !== -1;
   const lastAuditYear = sorted.length > 0 ? sorted[sorted.length - 1] : null;
-  const dueYear = lastAuditYear !== null ? lastAuditYear + 3 : null;
-  // 三年效期內 = 上次稽核距今未滿 3 年（含今年稽核）
+  const dueYear = lastAuditYear !== null ? lastAuditYear + validity : null;
+  // 效期內 = 上次稽核距今未滿 validity 年（含今年稽核）
   const withinValidity = lastAuditYear !== null && currentYear < dueYear;
-  const recentYears = sorted.filter(y => y > currentYear - 3 && y <= currentYear);
-
-  if (station.isCertified) {
-    return {
-      auditedThisYear: auditedThisYear,
-      countedInCycle: withinValidity,
-      countedYear: lastAuditYear,
-      dueYear: dueYear,
-      isCandidate: !auditedThisYear,
-      status: auditedThisYear ? STATION_STATUS.AUDITED_THIS_YEAR : STATION_STATUS.CANDIDATE,
-      cycleAuditYears: recentYears,
-    };
-  }
+  const recentYears = sorted.filter(y => y > currentYear - validity && y <= currentYear);
 
   let status;
   if (auditedThisYear) status = STATION_STATUS.AUDITED_THIS_YEAR;
@@ -158,31 +170,42 @@ function evaluateStationRolling_(station, auditYears, currentYear) {
 /**
  * 彙整全體駐站的週期進度與年度建議數量。
  *
- * 建議數量採「剩餘平均」而非「總數除以三」：
- * 若前兩年進度落後，第三年的建議數會自動補足到全部剩餘，
- * 確保任何時間點照建議執行都能在週期結束前完成。
+ * 兩個維度分離：
+ * - **覆蓋率**（countedTotal / coveragePercent）：所有站（含認證）併入同一個三年總覽，
+ *   以各站 evaluation.countedInCycle（三年口徑、每家只計一次）計算。
+ * - **年度建議**：一般站以三年週期攤平、認證站以兩年排程輪攤平（各自 ceil 剩餘 / 剩餘年數），
+ *   認證站用 evaluation.scheduleCovered（兩年口徑）判定本輪是否已覆蓋。
  *
- * 滾動模式下沒有「週期結束年」的概念：countedInCycle 的語意是「三年效期內」，
- * 建議數＝今年已到期的一般駐站全部（不攤平），remainingYears 回傳 null 供前端隱藏。
+ * 建議數量採「剩餘平均」而非「總數除以週期長度」：若前期落後，最後一年自動補足到全部剩餘，
+ * 確保任何時間點照建議執行都能在該輪結束前完成。
+ *
+ * 滾動模式下沒有「週期結束年」概念：建議＝今年已到期者全部（不攤平），remainingYears 回 null。
  *
  * @param {Array<{isCertified: boolean, evaluation: Object}>} evaluatedStations
  * @param {number} currentYear
- * @param {{start: number, end: number}} cycle
+ * @param {{start: number, end: number}} normalCycle - 一般站三年總覽週期
+ * @param {{start: number, end: number}} certifiedCycle - 認證站兩年排程輪
  * @param {string} [mode='FIXED']
  * @returns {Object} 摘要物件，供前端週期總覽列使用
  */
-function buildCycleSummary(evaluatedStations, currentYear, cycle, mode) {
+function buildCycleSummary(evaluatedStations, currentYear, normalCycle, certifiedCycle, mode) {
   const isRolling = mode === 'ROLLING';
   const certified = evaluatedStations.filter(s => s.isCertified);
   const normal = evaluatedStations.filter(s => !s.isCertified);
 
+  // 覆蓋率：全站三年總覽口徑（認證去重，每家一次）
   const countedTotal = evaluatedStations.filter(s => s.evaluation.countedInCycle).length;
   const remainingNormal = normal.filter(s => !s.evaluation.countedInCycle).length;
+  // 認證建議：兩年排程輪口徑（scheduleCovered=false 表本輪未稽）
+  const certifiedRemaining = certified.filter(s => !s.evaluation.scheduleCovered).length;
+  // 今年仍待稽的認證家數（統計顯示用）
   const certifiedPendingThisYear = certified.filter(s => !s.evaluation.auditedThisYear).length;
 
   // 固定模式：剩餘年數至少為 1（當年度本身），避免除以零；滾動模式無此概念
-  const remainingYears = isRolling ? null : Math.max(1, cycle.end - currentYear + 1);
+  const remainingYears = isRolling ? null : Math.max(1, normalCycle.end - currentYear + 1);
+  const certifiedRemainingYears = isRolling ? null : Math.max(1, certifiedCycle.end - currentYear + 1);
   const suggestedNormal = isRolling ? remainingNormal : Math.ceil(remainingNormal / remainingYears);
+  const suggestedCertified = isRolling ? certifiedRemaining : Math.ceil(certifiedRemaining / certifiedRemainingYears);
 
   return {
     totalStations: evaluatedStations.length,
@@ -190,10 +213,12 @@ function buildCycleSummary(evaluatedStations, currentYear, cycle, mode) {
     normalCount: normal.length,
     countedInCycle: countedTotal,
     remainingNormal: remainingNormal,
+    certifiedRemaining: certifiedRemaining,
     certifiedPendingThisYear: certifiedPendingThisYear,
     remainingYears: remainingYears,
     suggestedNormal: suggestedNormal,
-    suggestedTotal: suggestedNormal + certifiedPendingThisYear,
+    suggestedCertified: suggestedCertified,
+    suggestedTotal: suggestedNormal + suggestedCertified,
     coveragePercent: evaluatedStations.length === 0
       ? 0
       : Math.round((countedTotal / evaluatedStations.length) * 100),
@@ -228,5 +253,5 @@ function buildAuditHistory(auditYears, currentYear) {
 
 // 供 node 本機測試使用；GAS 環境無 module 物件，此區塊不會執行
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getCycleForYear, evaluateStation, buildCycleSummary, buildAuditHistory, STATION_STATUS };
+  module.exports = { getCycleForYear, evaluateStation, evaluateStationFor_, buildCycleSummary, buildAuditHistory, STATION_STATUS };
 }

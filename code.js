@@ -33,6 +33,8 @@ function getAuditDashboard() {
     const mode = getCycleMode_();
     const cycleStartYear = getCycleStartYear_();
     const cycle = getCycleForYear(currentYear, cycleStartYear, ENV.CYCLE_LENGTH_YEARS);
+    // 認證站排程輪（兩年）：僅供認證站的卡片狀態與年度建議；覆蓋率仍以三年 cycle 計
+    const certifiedCycle = getCycleForYear(currentYear, cycleStartYear, ENV.CERTIFIED_CYCLE_LENGTH_YEARS);
 
     const stations = getStations();
     const membersMap = getStationMembersMap();
@@ -56,7 +58,7 @@ function getAuditDashboard() {
 
     const evaluated = stations.map(station => {
       const auditYears = yearsByStation[station.code] || [];
-      const evaluation = evaluateStation(station, auditYears, currentYear, cycle, mode);
+      const evaluation = evaluateStationFor_(station, auditYears, currentYear, cycle, certifiedCycle, mode);
       const assignment = assignmentByStation[station.code] || null;
 
       // 狀態優先序：今年已稽核 > 待稽核（已分派）> 候選/效期內
@@ -86,7 +88,7 @@ function getAuditDashboard() {
       };
     });
 
-    const summary = buildCycleSummary(evaluated, currentYear, cycle, mode);
+    const summary = buildCycleSummary(evaluated, currentYear, cycle, certifiedCycle, mode);
     // 統計卡片：已預計 = 今年有分派的站數；已稽核 = 今年有稽核紀錄的站數
     summary.plannedThisYear = Object.keys(assignmentByStation).length;
     summary.auditedThisYear = evaluated.filter(s => s.evaluation.auditedThisYear).length;
@@ -104,6 +106,7 @@ function getAuditDashboard() {
       mode: mode,
       cycleStartYear: cycleStartYear,
       cycle: cycle,
+      certifiedCycle: certifiedCycle,
       summary: summary,
       auditors: getAuditors(),
       certifiedStations: evaluated.filter(s => s.isCertified).sort(byName),

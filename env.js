@@ -28,6 +28,14 @@ const ENV = {
   CYCLE_START_YEAR: 2026,
   CYCLE_LENGTH_YEARS: 3,
 
+  /**
+   * 認證駐站的「排程輪」長度（西元年）。
+   * 認證駐站每年只稽核部分家數，實際以兩年為一輪（每年約半數）走完所有認證站。
+   * 此值僅用於認證站的排程狀態與年度建議；覆蓋率仍以 CYCLE_LENGTH_YEARS 的三年總覽
+   * 計算（認證站併入、每家只計一次），見 AuditCycle.js buildCycleSummary。
+   */
+  CERTIFIED_CYCLE_LENGTH_YEARS: 2,
+
   /** 補登歷史稽核紀錄的年度下限，防止誤植（如 226）汙染資料 */
   MIN_AUDIT_YEAR: 2000,
 

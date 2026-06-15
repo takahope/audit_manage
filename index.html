@@ -893,7 +893,7 @@
           '</div>' +
           '<div class="suggestion-box">' +
             '<div>今年建議稽核 <span class="num">' + s.suggestedTotal + '</span> 間</div>' +
-            '<div class="detail">一般駐站 ' + s.suggestedNormal + ' 間 ＋ 認證駐站 ' + s.certifiedPendingThisYear + ' 間（年度必稽）</div>' +
+            '<div class="detail">一般駐站 ' + s.suggestedNormal + ' 間 ＋ 認證駐站 ' + s.suggestedCertified + ' 間（兩年一輪）</div>' +
           '</div>' +
         '</div>';
     }
@@ -907,8 +907,15 @@
         return;
       }
       const normalHint = dashboard.mode === 'ROLLING' ? '上次稽核後滿三年到期' : '三年週期內稽核一次';
+      const cc = dashboard.certifiedCycle;
+      const certifiedTitle = (dashboard.mode === 'ROLLING' || !cc)
+        ? '認證駐站'
+        : '認證駐站（本輪 ' + cc.start + '–' + cc.end + '）';
+      const certifiedHint = dashboard.mode === 'ROLLING'
+        ? '上次稽核後滿兩年到期'
+        : '兩年一輪，輪內每家稽核一次';
       root.innerHTML =
-        buildSection('認證駐站', 'certified', dashboard.certifiedStations, '每年必稽，僅第一年計入週期') +
+        buildSection(certifiedTitle, 'certified', dashboard.certifiedStations, certifiedHint) +
         buildSection('一般駐站', 'normal', dashboard.normalStations, normalHint);
       bindCardEvents();
     }
@@ -2133,6 +2140,7 @@
       ];
       const currentYear = 2026;
       const cycle = getCycleForYear(currentYear, state.cycleStartYear, 3);
+      const certifiedCycle = getCycleForYear(currentYear, state.cycleStartYear, 2); // 認證站兩年排程輪
 
       if (fnName === 'setCycleMode') {
         state.mode = args[0];
@@ -2265,7 +2273,7 @@
       const evaluated = stations.map(function (st) {
         const stationRecords = state.records.filter(r => r.stationCode === st.code);
         const years = stationRecords.map(r => r.year);
-        const evaluation = evaluateStation(st, years, currentYear, cycle, state.mode);
+        const evaluation = evaluateStationFor_(st, years, currentYear, cycle, certifiedCycle, state.mode);
         const assignment = assignmentByStation[st.code] || null;
         if (assignment && evaluation.status !== STATION_STATUS.AUDITED_THIS_YEAR) {
           evaluation.status = STATION_STATUS.PENDING_AUDIT;
@@ -2287,7 +2295,7 @@
         });
       });
 
-      const summary = buildCycleSummary(evaluated, currentYear, cycle, state.mode);
+      const summary = buildCycleSummary(evaluated, currentYear, cycle, certifiedCycle, state.mode);
       summary.plannedThisYear = Object.keys(assignmentByStation).length;
       summary.auditedThisYear = evaluated.filter(s => s.evaluation.auditedThisYear).length;
 
@@ -2315,7 +2323,7 @@
       });
 
       return new Promise(resolve => setTimeout(() => resolve({
-        currentYear: currentYear, mode: state.mode, cycleStartYear: state.cycleStartYear, cycle: cycle, summary: summary, auditors: auditors,
+        currentYear: currentYear, mode: state.mode, cycleStartYear: state.cycleStartYear, cycle: cycle, certifiedCycle: certifiedCycle, summary: summary, auditors: auditors,
         certifiedStations: evaluated.filter(s => s.isCertified),
         normalStations: evaluated.filter(s => !s.isCertified),
         centerTypes: centerTypes,

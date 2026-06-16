@@ -940,11 +940,11 @@
           infoClass = ' draft';
           infoBody = '<span class="badge badge-draft">待定日期</span>　稽核人員：' + escapeHtml(a.auditorNames);
         }
-        // 已排程一律顯示「重新排定」（不論人員／日期是否完整），對齊中心稽核卡片
-        mainBtnLabel = '重新排定';
+        // 已排程一律顯示「修改」（不論人員／日期是否完整），對齊中心稽核卡片
+        mainBtnLabel = '修改';
         assignmentInfoHtml = '<div class="assignment-info' + infoClass + '">' + infoBody + '</div>';
         actionButtons.push('<button class="btn-sm btn-edit-draft" data-action="assign" data-code="' + escapeHtml(station.code) + '">' + mainBtnLabel + '</button>');
-        actionButtons.push('<button class="btn-sm btn-remove" data-action="cancel-assignment" data-code="' + escapeHtml(station.code) + '">取消排定</button>');
+        actionButtons.push('<button class="btn-sm btn-remove" data-action="cancel-assignment" data-code="' + escapeHtml(station.code) + '">取消</button>');
       } else if (ev.status === 'CANDIDATE') {
         actionButtons.push('<button class="btn-sm btn-assign" data-action="assign" data-code="' + escapeHtml(station.code) + '">排定稽核</button>');
       }
@@ -1130,8 +1130,8 @@
       // 動作按鈕
       const actions = [];
       if (type.plan) {
-        actions.push('<button class="btn-sm btn-edit-draft" data-action="plan-center" data-type="' + type.id + '">重新排定</button>');
-        actions.push('<button class="btn-sm btn-remove" data-action="cancel-center-plan" data-type="' + type.id + '">取消排定</button>');
+        actions.push('<button class="btn-sm btn-edit-draft" data-action="plan-center" data-type="' + type.id + '">修改</button>');
+        actions.push('<button class="btn-sm btn-remove" data-action="cancel-center-plan" data-type="' + type.id + '">取消</button>');
       } else if (ev.status !== 'DONE') {
         // 本期已完成（DONE）即隱藏「排定稽核」；待行事曆進入下一期、狀態回到 PENDING 才會再出現
         // （半年制以「本期」為準，故本期完成後無法預先排下一期，符合「完成即隱藏」的取捨）
@@ -1261,7 +1261,7 @@
       document.getElementById('center-form-title').textContent =
         (isPlan ? '排定稽核 — ' : '登錄完成 — ') + type.name;
       document.getElementById('center-form-hint').textContent = isPlan
-        ? '人員與日期可分開設定（至少一項）；先排日期會立即建立行事曆預約，之後補人員會修改同一筆。重新排定會覆蓋原排程。'
+        ? '人員與日期可分開設定（至少一項）；先排日期會立即建立行事曆預約，之後補人員會修改同一筆。修改會覆蓋原排程。'
         : '登錄實際完成日期（選過去日期即為補登歷史）；完成後若有排程將自動清除。';
       document.getElementById('center-form-date-label').textContent = isPlan ? '預定稽核日期（可留空）' : '實際稽核日期';
       document.getElementById('center-form-auditor-label').textContent =

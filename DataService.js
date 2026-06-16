@@ -3,6 +3,7 @@
  *
  * 職責：
  * - 跨試算表讀取 HR_managerv3 的駐站清單（含 ISO 旗標）與駐站成員
+ * - 讀取外部「認證駐站紀錄」表，彙整每家認證任期與生效年度（認證身分真相來源）
  * - 讀寫本系統的稽核紀錄工作表
  *
  * 規範：
@@ -44,6 +45,16 @@ function getAuditSpreadsheet_() {
 }
 
 /**
+ * 取得外部「認證駐站紀錄」試算表（認證身分真相來源）。
+ * @returns {Spreadsheet|null} 未設定 ISO_STATION_SPREADSHEET_ID 時回 null（呼叫端退回 I 欄判定）
+ */
+function getCertSpreadsheet_() {
+  const id = String(ENV.ISO_STATION_SPREADSHEET_ID || '').trim();
+  if (!id) return null;
+  return SpreadsheetApp.openById(id);
+}
+
+/**
  * 讀取工作表的資料列（去表頭、過濾關鍵欄為空的列）。
  *
  * @param {Spreadsheet} ss
@@ -82,6 +93,18 @@ function getStations() {
     .filter(row => isStationCode_(row[COL.ORG.CODE]))
     .map(rowToStation_);
 
+  // 認證身分真相來源：設定了外部認證紀錄表就以任期覆寫 I 欄判定並帶入生效年度；
+  // 未設定則維持 rowToStation_ 的 I 欄 'V' 判定（certifiedSince=0，兩年輪不過濾）。
+  if (String(ENV.ISO_STATION_SPREADSHEET_ID || '').trim()) {
+    const tenures = getCertifiedTenures();
+    stations.forEach(st => {
+      const t = tenures[st.code];
+      st.isCertified = !!(t && t.isCertified);
+      st.certifiedSince = t ? t.certifiedSince : 0;
+      st.certifiedTenures = t ? t.tenures : [];
+    });
+  }
+
   cache.put(CACHE_KEYS.STATIONS, JSON.stringify(stations), ENV.CACHE_TTL_SEC);
   return stations;
 }
@@ -98,6 +121,7 @@ function rowToStation_(row) {
     managerEmail: row[COL.ORG.MANAGER_EMAIL] || '',
     managerName: row[COL.ORG.MANAGER_NAME] || '',
     isCertified: isCertifiedMark_(row[COL.ORG.ISO_FLAG]),
+    certifiedSince: 0, // 預設不過濾兩年輪；設定外部認證表時由 getStations 覆寫
   };
 }
 
@@ -107,6 +131,59 @@ function rowToStation_(row) {
  */
 function isCertifiedMark_(value) {
   return String(value || '').trim().toUpperCase() === String(ENV.CERTIFIED_MARK).toUpperCase();
+}
+
+/**
+ * 從日期顯示字串抽出西元年；無法解析回 0。
+ * getDisplayValues() 結果可能為 2025-01-01 / 2025/1/1 / 2025 等格式，一律取首個四位數年份。
+ */
+function parseYear_(value) {
+  const m = String(value || '').match(/\d{4}/);
+  return m ? Number(m[0]) : 0;
+}
+
+/**
+ * 讀取外部「認證駐站紀錄」表，彙整每家駐站的認證任期（含快取）。
+ *
+ * 認證身分以「指定時間～換掉時間」區間記錄：換掉時間（E 欄）為空 = 當前認證站，
+ * 指定時間（D 欄）年份 = 認證生效年度。同站多筆 = 多段任期（曾認證→取消→再認證），
+ * 當前任期取換掉時間為空那筆（多筆開放取最新生效年）。
+ *
+ * 未設定 ISO_STATION_SPREADSHEET_ID 時回空物件（呼叫端退回 I 欄 'V' 判定）。
+ *
+ * @returns {Object} { 駐站代碼: { isCertified, certifiedSince, tenures: Array<{since, until}> } }
+ */
+function getCertifiedTenures() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(CACHE_KEYS.CERT_TENURES);
+  if (cached) return JSON.parse(cached);
+
+  const ss = getCertSpreadsheet_();
+  const result = {};
+  if (ss) {
+    const rows = getSheetRows_(ss, SHEET_NAMES.CERT_RECORDS, COL.CERT_RECORD.STATION_CODE);
+    rows.forEach(row => {
+      const code = String(row[COL.CERT_RECORD.STATION_CODE] || '').trim();
+      if (!code) return;
+      const since = parseYear_(row[COL.CERT_RECORD.ASSIGNED_DATE]);
+      const removedText = String(row[COL.CERT_RECORD.REMOVED_DATE] || '').trim();
+      const until = removedText ? parseYear_(removedText) : null; // null = 仍在認證
+      if (!result[code]) result[code] = { isCertified: false, certifiedSince: 0, tenures: [] };
+      result[code].tenures.push({ since: since, until: until });
+    });
+
+    // 由任期推導當前身分：有一筆 until 為 null（仍在認證）即為當前認證站
+    Object.keys(result).forEach(code => {
+      const open = result[code].tenures.filter(t => t.until === null);
+      if (open.length > 0) {
+        result[code].isCertified = true;
+        result[code].certifiedSince = Math.max.apply(null, open.map(t => t.since || 0));
+      }
+    });
+  }
+
+  cache.put(CACHE_KEYS.CERT_TENURES, JSON.stringify(result), ENV.CACHE_TTL_SEC);
+  return result;
 }
 
 /**

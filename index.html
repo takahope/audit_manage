@@ -149,6 +149,8 @@
       white-space: nowrap;
     }
     .hist-tag.counted { color: var(--color-primary); border-color: var(--color-primary); }
+    .hist-tag.cert-in { color: var(--color-accent); border-color: var(--color-accent); }
+    .hist-tag.cert-pre { color: var(--color-muted); border-style: dashed; }
     .hist-del {
       border: none; background: none; cursor: pointer; color: var(--color-danger);
       font-size: 16px; line-height: 1; padding: 0 var(--space-1); opacity: .55; flex-shrink: 0;
@@ -303,6 +305,10 @@
     .badge-certified  {
       color: var(--color-accent); border-radius: 9999px;
       margin-left: var(--space-1);
+    }
+    .cert-since {
+      font-family: var(--font-data); font-size: 11px;
+      color: var(--color-muted); margin-left: var(--space-1);
     }
 
     .year-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); align-items: center; }
@@ -970,7 +976,8 @@
             '<div>' +
               '<div class="station-code">' + escapeHtml(station.code) + '</div>' +
               '<div class="station-name">' + escapeHtml(station.name) +
-                (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '') + '</div>' +
+                (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '') +
+                (station.isCertified && station.certifiedSince ? ' <span class="cert-since">認證自 ' + station.certifiedSince + '</span>' : '') + '</div>' +
               '<div class="station-manager">負責人：' + escapeHtml(station.managerName || '未設定') + '</div>' +
               historyLine +
             '</div>' +
@@ -1636,12 +1643,17 @@
         return '<p class="empty-hist">此駐站尚無稽核紀錄，可由下方「登錄完成／補登」新增。</p>';
       }
       const countedYear = station.evaluation.countedYear;
+      // 認證站：標示紀錄落在認證任期內（計入兩年輪）或升認證前（只進三年總覽）
+      const certSince = station.isCertified ? (station.certifiedSince || 0) : 0;
       return '<ul class="history-list">' + station.auditRecords.map(function (r) {
         const dateText = r.auditDate
           ? '<span class="mono">' + escapeHtml(r.auditDate) + '</span>'
           : '<span class="mono">' + r.year + ' 年</span><span class="hist-tag">僅年度</span>';
         const countedTag = (r.year === countedYear) ? '<span class="hist-tag counted">計入週期</span>' : '';
-        return '<li><span class="hist-main">' + dateText + countedTag +
+        const certTag = certSince ? (r.year >= certSince
+          ? '<span class="hist-tag cert-in">認證期內</span>'
+          : '<span class="hist-tag cert-pre">升認證前</span>') : '';
+        return '<li><span class="hist-main">' + dateText + countedTag + certTag +
           (r.recorder ? '　<span class="mono dim">' + escapeHtml(r.recorder) + '</span>' : '') +
           (r.note ? '　' + escapeHtml(r.note) : '') + '</span>' +
           '<button class="hist-del" data-del-kind="station" data-code="' + escapeHtml(station.code) +
@@ -1952,6 +1964,7 @@
           { stationCode: 'GRP-CO-B01', year: 2026, auditDate: '2026/01/20' },
           { stationCode: 'GRP-CO-B03', year: 2026, auditDate: '' },  // 僅年度示範（早期資料）
           { stationCode: 'GRP-CO-B04', year: 2022, auditDate: '' },  // 逾期示範：距 2026 已滿三年
+          { stationCode: 'GRP-CO-A03', year: 2026, auditDate: '2026/05/10' }, // 升認證前(2027 生效)已稽 → 只進三年總覽、不進兩年輪
         ],
         assignments: [],
         // 中心稽核預置情境：半年制 H1 已稽、每年制有排程／去年漏稽／已完成、事件一開一銷、不定期一筆
@@ -1972,9 +1985,9 @@
         ],
       });
       const stations = [
-        { code: 'GRP-CO-A01', name: '台北車站駐站', managerName: '王主任', isCertified: true,  members: [{ name: '陳一', title: '駐站人員' }, { name: '林二', title: '駐站人員' }] },
-        { code: 'GRP-CO-A02', name: '板橋駐站',     managerName: '李主任', isCertified: true,  members: [{ name: '張三', title: '駐站人員' }] },
-        { code: 'GRP-CO-A03', name: '桃園駐站',     managerName: '吳主任', isCertified: true,  members: [] },
+        { code: 'GRP-CO-A01', name: '台北車站駐站', managerName: '王主任', isCertified: true,  certifiedSince: 2024, certifiedTenures: [{ since: 2024, until: null }], members: [{ name: '陳一', title: '駐站人員' }, { name: '林二', title: '駐站人員' }] },
+        { code: 'GRP-CO-A02', name: '板橋駐站',     managerName: '李主任', isCertified: true,  certifiedSince: 2024, certifiedTenures: [{ since: 2024, until: null }], members: [{ name: '張三', title: '駐站人員' }] },
+        { code: 'GRP-CO-A03', name: '桃園駐站',     managerName: '吳主任', isCertified: true,  certifiedSince: 2027, certifiedTenures: [{ since: 2027, until: null }], members: [] },
         { code: 'GRP-CO-B01', name: '新竹駐站',     managerName: '劉組長', isCertified: false, members: [{ name: '黃四', title: '駐站人員' }] },
         { code: 'GRP-CO-B02', name: '台中駐站',     managerName: '蔡組長', isCertified: false, members: [{ name: '許五', title: '駐站人員' }, { name: '鄭六', title: '駐站人員' }] },
         { code: 'GRP-CO-B03', name: '嘉義駐站',     managerName: '楊組長', isCertified: false, members: [] },

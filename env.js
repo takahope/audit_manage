@@ -21,6 +21,14 @@ const ENV = {
   AUDIT_SPREADSHEET_ID: '',
 
   /**
+   * 認證駐站紀錄試算表 ID（外部維護，本系統只讀）。
+   * 此表以「指定時間～換掉時間」區間記錄每家駐站的認證任期，作為認證身分的真相來源：
+   * 換掉時間為空 = 當前認證站；指定時間的年份 = 認證生效年度（certifiedSince）。
+   * 留空 = 退回組織架構樹 I 欄 'V' 判定（生效年未知，兩年輪不過濾，等同舊版行為）。
+   */
+  ISO_STATION_SPREADSHEET_ID: '',
+
+  /**
    * 三年週期錨定起始年的「預設值」（西元）。
    * 使用者可在前端「週期設定」中變更，實際生效值存於
    * Script Properties（key 見 CYCLE_START_YEAR_PROPERTY_KEY），此值僅在未設定時使用。
@@ -76,12 +84,15 @@ const SHEET_NAMES = {
   CENTER_RECORDS: '中心稽核紀錄',
   CENTER_PLANS: '中心稽核排程',
   TRIGGER_EVENTS: '稽核觸發事件',
+  // 外部認證駐站紀錄表（ISO_STATION_SPREADSHEET_ID 指向的試算表內）
+  CERT_RECORDS: '認證駐站紀錄',
 };
 
 const CACHE_KEYS = {
   STATIONS: 'audit_stations_v1',
   MEMBERS: 'audit_members_v1',
   AUDITORS: 'audit_auditors_v1',
+  CERT_TENURES: 'audit_cert_tenures_v1',
 };
 
 /**
@@ -168,5 +179,18 @@ const COL = {
     DESCRIPTION: 3,
     RECORDER: 4,
     RECORDED_AT: 5,
+  },
+  // 外部「認證駐站紀錄」表：以區間（指定～換掉）記錄每家認證任期，本系統只讀
+  CERT_RECORD: {
+    RECORD_ID: 0,        // A 欄：紀錄ID（CERT-… UUID）
+    STATION_CODE: 1,     // B 欄：駐站代碼（GRP-CO-…）
+    STATION_NAME: 2,     // C 欄：駐站名稱
+    ASSIGNED_DATE: 3,    // D 欄：指定時間（認證任期起始；年份 = certifiedSince）
+    REMOVED_DATE: 4,     // E 欄：換掉時間（空 = 仍在認證）
+    ASSIGNER_EMAIL: 5,   // F 欄：指定人 Email
+    ASSIGNER_NAME: 6,    // G 欄：指定人姓名
+    REMOVER_EMAIL: 7,    // H 欄：換站操作人 Email
+    REMOVER_NAME: 8,     // I 欄：換站操作人姓名
+    BATCH_ID: 9,         // J 欄：批次ID
   },
 };

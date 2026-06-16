@@ -74,6 +74,8 @@ function getAuditDashboard() {
         managerName: station.managerName,
         managerEmail: station.managerEmail,
         isCertified: station.isCertified,
+        certifiedSince: station.certifiedSince || 0,
+        certifiedTenures: station.certifiedTenures || [],
         members: membersMap[station.code] || [],
         allAuditYears: auditYears.slice().sort(function (a, b) { return a - b; }),
         auditRecords: auditView.auditRecords,

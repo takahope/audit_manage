@@ -5,10 +5,12 @@
  * 因此可以直接用 node 在本機跑邊界測試（見 test/audit-cycle.test.js）。
  *
  * 業務規則：
- * - 週期為「固定三年區段」：以 CYCLE_START_YEAR 為錨點，2026–2028 一輪、2029–2031 下一輪。
- * - ISO 認證駐站每年必稽，但在每輪週期中只有「第一筆」紀錄計入週期覆蓋；
- *   之後年度的稽核照常執行，只是不重複計算。
- * - 一般駐站在週期內有任一筆紀錄即視為本輪完成。
+ * - 一般駐站：固定三年區段（CYCLE_START_YEAR 為錨點，2026–2028、2029–2031…），
+ *   區段內有任一筆紀錄即視為本輪完成。
+ * - ISO 認證駐站：兩年排程輪（每年只稽部分家數），輪內每家稽一次；覆蓋率仍併入
+ *   三年總覽、每家只計一次（去重），第三年不重複計入。見 evaluateStationFor_。
+ * - 認證身分帶「生效年度」（certifiedSince）：升認證前（還是一般站時）的稽核只進
+ *   三年總覽、不進兩年排程輪——身分是隨時間改變的事實，而非套用到全部歷史的快照。
  */
 
 /**
@@ -98,12 +100,14 @@ function evaluateStation(station, auditYears, currentYear, cycle, mode, validity
  * 依駐站類型套用對應週期，產出供前端／summary 消費的單一 evaluation。
  *
  * - 一般站：只用三年總覽週期；scheduleCovered 等同 countedInCycle。
- * - 認證站：算兩份 —— 三年總覽（取 countedInCycle/countedYear 供覆蓋率，去重）＋
+ * - 認證站：算兩份 —— 三年總覽（取 countedInCycle/countedYear 供覆蓋率，去重，用全部紀錄）＋
  *   兩年排程輪（取 status/isCandidate/dueYear 供卡片狀態與建議）。
  *   如此認證站在三年週期內已稽過就算覆蓋（第三年不重複），
  *   但兩年新一輪仍會被排入年度建議。
+ *   兩年排程輪只納入 station.certifiedSince（含）起的稽核紀錄，升認證前的不算；
+ *   certifiedSince 為 0/未定義時不過濾（生效年未知 fallback，等同現狀）。
  *
- * @param {{code: string, isCertified: boolean}} station
+ * @param {{code: string, isCertified: boolean, certifiedSince?: number}} station
  * @param {number[]} auditYears
  * @param {number} currentYear
  * @param {{start, end}} normalCycle - 三年總覽週期
@@ -117,7 +121,11 @@ function evaluateStationFor_(station, auditYears, currentYear, normalCycle, cert
     triEval.scheduleCovered = triEval.countedInCycle;
     return triEval;
   }
-  const biEval = evaluateStation(station, auditYears, currentYear, certifiedCycle, mode, 2);
+  // 兩年排程輪只認可「認證生效年度起」的稽核紀錄；升認證前（還是一般站時）的紀錄
+  // 只進三年總覽、不進兩年輪。certifiedSince 為 0/未定義時不過濾（生效年未知 fallback，等同現狀）。
+  const certifiedSince = station.certifiedSince || 0;
+  const certYears = auditYears.filter(y => y >= certifiedSince);
+  const biEval = evaluateStation(station, certYears, currentYear, certifiedCycle, mode, 2);
   // 卡片狀態／候選／到期年用兩年排程輪；覆蓋率欄位用三年總覽（去重）
   biEval.countedInCycle = triEval.countedInCycle;
   biEval.countedYear = triEval.countedYear;

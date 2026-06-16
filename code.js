@@ -29,90 +29,25 @@ function doGet() {
  */
 function getAuditDashboard() {
   try {
-    const currentYear = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy'));
-    const mode = getCycleMode_();
-    const cycleStartYear = getCycleStartYear_();
-    const cycle = getCycleForYear(currentYear, cycleStartYear, ENV.CYCLE_LENGTH_YEARS);
-    // 認證站排程輪（兩年）：僅供認證站的卡片狀態與年度建議；覆蓋率仍以三年 cycle 計
-    const certifiedCycle = getCycleForYear(currentYear, cycleStartYear, ENV.CERTIFIED_CYCLE_LENGTH_YEARS);
-
-    const stations = getStations();
-    const membersMap = getStationMembersMap();
-    const records = getAuditRecords();
-
-    // 駐站代碼 → 該站所有稽核年份／完整紀錄
-    const yearsByStation = {};
-    const recordsByStation = {};
-    records.forEach(r => {
-      if (!yearsByStation[r.stationCode]) yearsByStation[r.stationCode] = [];
-      yearsByStation[r.stationCode].push(r.year);
-      if (!recordsByStation[r.stationCode]) recordsByStation[r.stationCode] = [];
-      recordsByStation[r.stationCode].push(r);
-    });
-
-    // 駐站代碼 → 今年的稽核分派
-    const assignmentByStation = {};
-    getAssignments().forEach(plan => {
-      if (plan.year === currentYear) assignmentByStation[plan.stationCode] = plan;
-    });
-
-    const evaluated = stations.map(station => {
-      const auditYears = yearsByStation[station.code] || [];
-      const evaluation = evaluateStationFor_(station, auditYears, currentYear, cycle, certifiedCycle, mode);
-      const assignment = assignmentByStation[station.code] || null;
-
-      // 狀態優先序：今年已稽核 > 待稽核（已分派）> 候選/效期內
-      if (assignment && evaluation.status !== STATION_STATUS.AUDITED_THIS_YEAR) {
-        evaluation.status = STATION_STATUS.PENDING_AUDIT;
-      }
-
-      const auditView = buildStationAuditView_(recordsByStation[station.code] || []);
-      return {
-        code: station.code,
-        name: station.name,
-        alias: station.alias,
-        managerName: station.managerName,
-        managerEmail: station.managerEmail,
-        isCertified: station.isCertified,
-        certifiedSince: station.certifiedSince || 0,
-        certifiedTenures: station.certifiedTenures || [],
-        members: membersMap[station.code] || [],
-        allAuditYears: auditYears.slice().sort(function (a, b) { return a - b; }),
-        auditRecords: auditView.auditRecords,
-        lastAuditDisplay: auditView.lastAuditDisplay,
-        assignment: assignment && {
-          auditorNames: assignment.auditorNames,
-          auditorEmails: assignment.auditorEmails,
-          plannedDate: assignment.plannedDate,
-        },
-        history: buildAuditHistory(auditYears, currentYear),
-        evaluation: evaluation,
-      };
-    });
-
-    const summary = buildCycleSummary(evaluated, currentYear, cycle, certifiedCycle, mode);
-    // 統計卡片：已預計 = 今年有分派的站數；已稽核 = 今年有稽核紀錄的站數
-    summary.plannedThisYear = Object.keys(assignmentByStation).length;
-    summary.auditedThisYear = evaluated.filter(s => s.evaluation.auditedThisYear).length;
-
-    // ---- 中心稽核項目（類型 2～8）----
-    const currentMonth = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM'));
-    const center = buildCenterDashboard_({ year: currentYear, month: currentMonth }, cycleStartYear, mode);
-
+    const core = buildStationDashboardCore_();
     const byName = function (a, b) {
       return String(a.name || a.code).localeCompare(String(b.name || b.code), 'zh-Hant');
     };
 
+    // ---- 中心稽核項目（類型 2～8）----
+    const currentMonth = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM'));
+    const center = buildCenterDashboard_({ year: core.currentYear, month: currentMonth }, core.cycleStartYear, core.mode);
+
     return successResponse_({
-      currentYear: currentYear,
-      mode: mode,
-      cycleStartYear: cycleStartYear,
-      cycle: cycle,
-      certifiedCycle: certifiedCycle,
-      summary: summary,
+      currentYear: core.currentYear,
+      mode: core.mode,
+      cycleStartYear: core.cycleStartYear,
+      cycle: core.cycle,
+      certifiedCycle: core.certifiedCycle,
+      summary: core.summary,
       auditors: getAuditors(),
-      certifiedStations: evaluated.filter(s => s.isCertified).sort(byName),
-      normalStations: evaluated.filter(s => !s.isCertified).sort(byName),
+      certifiedStations: core.evaluated.filter(s => s.isCertified).sort(byName),
+      normalStations: core.evaluated.filter(s => !s.isCertified).sort(byName),
       centerTypes: center.types,
       centerSummary: center.summary,
       triggerCategories: TRIGGER_CATEGORIES,
@@ -121,6 +56,125 @@ function getAuditDashboard() {
   } catch (error) {
     return errorResponse_(error.message);
   }
+}
+
+/**
+ * 組裝駐站儀表板核心：逐站評估 + 週期摘要。
+ * 由 getAuditDashboard（全量）與各儲存 API 的部分更新（stationDeltaFor_）共用，
+ * 確保單卡刷新與整頁刷新走同一套評估邏輯。
+ *
+ * @returns {{currentYear, mode, cycleStartYear, cycle, certifiedCycle, evaluated: Array, summary: Object}}
+ */
+function buildStationDashboardCore_() {
+  const currentYear = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy'));
+  const mode = getCycleMode_();
+  const cycleStartYear = getCycleStartYear_();
+  const cycle = getCycleForYear(currentYear, cycleStartYear, ENV.CYCLE_LENGTH_YEARS);
+  // 認證站排程輪（兩年）：僅供認證站的卡片狀態與年度建議；覆蓋率仍以三年 cycle 計
+  const certifiedCycle = getCycleForYear(currentYear, cycleStartYear, ENV.CERTIFIED_CYCLE_LENGTH_YEARS);
+
+  const stations = getStations();
+  const membersMap = getStationMembersMap();
+  const records = getAuditRecords();
+
+  // 駐站代碼 → 該站所有稽核年份／完整紀錄
+  const yearsByStation = {};
+  const recordsByStation = {};
+  records.forEach(r => {
+    if (!yearsByStation[r.stationCode]) yearsByStation[r.stationCode] = [];
+    yearsByStation[r.stationCode].push(r.year);
+    if (!recordsByStation[r.stationCode]) recordsByStation[r.stationCode] = [];
+    recordsByStation[r.stationCode].push(r);
+  });
+
+  // 駐站代碼 → 今年的稽核分派
+  const assignmentByStation = {};
+  getAssignments().forEach(plan => {
+    if (plan.year === currentYear) assignmentByStation[plan.stationCode] = plan;
+  });
+
+  const evaluated = stations.map(station => {
+    const auditYears = yearsByStation[station.code] || [];
+    const evaluation = evaluateStationFor_(station, auditYears, currentYear, cycle, certifiedCycle, mode);
+    const assignment = assignmentByStation[station.code] || null;
+
+    // 狀態優先序：今年已稽核 > 待稽核（已分派）> 候選/效期內
+    if (assignment && evaluation.status !== STATION_STATUS.AUDITED_THIS_YEAR) {
+      evaluation.status = STATION_STATUS.PENDING_AUDIT;
+    }
+
+    const auditView = buildStationAuditView_(recordsByStation[station.code] || []);
+    return {
+      code: station.code,
+      name: station.name,
+      alias: station.alias,
+      managerName: station.managerName,
+      managerEmail: station.managerEmail,
+      isCertified: station.isCertified,
+      certifiedSince: station.certifiedSince || 0,
+      certifiedTenures: station.certifiedTenures || [],
+      members: membersMap[station.code] || [],
+      allAuditYears: auditYears.slice().sort(function (a, b) { return a - b; }),
+      auditRecords: auditView.auditRecords,
+      lastAuditDisplay: auditView.lastAuditDisplay,
+      assignment: assignment && {
+        auditorNames: assignment.auditorNames,
+        auditorEmails: assignment.auditorEmails,
+        plannedDate: assignment.plannedDate,
+      },
+      history: buildAuditHistory(auditYears, currentYear),
+      evaluation: evaluation,
+    };
+  });
+
+  const summary = buildCycleSummary(evaluated, currentYear, cycle, certifiedCycle, mode);
+  // 統計卡片：已預計 = 今年有分派的站數；已稽核 = 今年有稽核紀錄的站數
+  summary.plannedThisYear = Object.keys(assignmentByStation).length;
+  summary.auditedThisYear = evaluated.filter(s => s.evaluation.auditedThisYear).length;
+
+  return {
+    currentYear: currentYear,
+    mode: mode,
+    cycleStartYear: cycleStartYear,
+    cycle: cycle,
+    certifiedCycle: certifiedCycle,
+    evaluated: evaluated,
+    summary: summary,
+  };
+}
+
+/**
+ * 部分更新用：重算後取出指定駐站的最新卡片資料與整體摘要。
+ * 寫入 API 成功後呼叫，將結果折疊進回應，前端即可只替換該卡片、更新摘要列，
+ * 不必再 round-trip 取整份儀表板。
+ *
+ * @param {string[]} codes - 受影響的駐站代碼
+ * @returns {{stations: Array, summary: Object}}
+ */
+function stationDeltaFor_(codes) {
+  const core = buildStationDashboardCore_();
+  const wanted = {};
+  codes.forEach(c => { wanted[String(c).trim()] = true; });
+  return {
+    stations: core.evaluated.filter(s => wanted[s.code]),
+    summary: core.summary,
+  };
+}
+
+/**
+ * 部分更新用：重算後取出指定中心稽核項目的最新卡片資料與中心摘要。
+ *
+ * @param {string} typeId
+ * @returns {{centerType: (Object|null), centerSummary: Object}}
+ */
+function centerDeltaFor_(typeId) {
+  const currentYear = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy'));
+  const currentMonth = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM'));
+  const center = buildCenterDashboard_({ year: currentYear, month: currentMonth }, getCycleStartYear_(), getCycleMode_());
+  return {
+    centerType: center.types.find(t => t.id === typeId) || null,
+    centerSummary: center.summary,
+  };
 }
 
 /**
@@ -330,8 +384,11 @@ function saveStationAssignment(stationCode, year, auditorEmails, plannedDate) {
     else if (hasDate) statusMsg = '已為 ' + station.name + ' 排定 ' + dateText + '（待指派人員）';
     else statusMsg = '已為 ' + station.name + ' 指派人員（待定日期，尚未寫入行事曆）';
 
+    const delta = stationDeltaFor_([station.code]);
     return successResponse_({
       message: statusMsg + (hasDate ? calendarSyncSuffix_(calendarWarnings) : ''),
+      stations: delta.stations,
+      summary: delta.summary,
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -355,8 +412,11 @@ function cancelAssignment(stationCode, year) {
     if (!removed) {
       return errorResponse_('找不到 ' + stationCode + ' 於 ' + year + ' 年的分派紀錄，可能已被取消');
     }
+    const delta = stationDeltaFor_([stationCode]);
     return successResponse_({
       message: '已取消 ' + stationCode + ' 的 ' + year + ' 年稽核分派' + calendarSyncSuffix_([warning]),
+      stations: delta.stations,
+      summary: delta.summary,
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -436,8 +496,11 @@ function planCenterAudit(typeId, auditorEmails, plannedDate, reason) {
     else if (hasDate) statusMsg = '已為「' + typeDef.name + '」排定 ' + dateText + '（待指派人員）';
     else statusMsg = '已為「' + typeDef.name + '」指派人員（待定日期，尚未寫入行事曆）';
 
+    const delta = centerDeltaFor_(typeDef.id);
     return successResponse_({
       message: statusMsg + (hasDate ? calendarSyncSuffix_(calendarWarnings) : ''),
+      centerType: delta.centerType,
+      centerSummary: delta.centerSummary,
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -459,8 +522,11 @@ function cancelCenterPlan(typeId) {
     if (!removeCenterPlan(typeId)) {
       return errorResponse_('「' + typeDef.name + '」目前沒有排程，可能已被取消');
     }
+    const delta = centerDeltaFor_(typeId);
     return successResponse_({
       message: '已取消「' + typeDef.name + '」的稽核排程' + calendarSyncSuffix_([warning]),
+      centerType: delta.centerType,
+      centerSummary: delta.centerSummary,
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -506,7 +572,12 @@ function recordCenterAudit(typeId, auditDate, auditorEmails, reason, note) {
     const plan = getCenterPlans().find(p => p.typeId === typeId);
     if (plan && plan.calendarEventId) syncCalendarDelete_(plan.calendarEventId);
     removeCenterPlan(typeId);
-    return successResponse_({ message: '已登錄「' + typeDef.name + '」於 ' + auditDate + ' 完成稽核' });
+    const delta = centerDeltaFor_(typeDef.id);
+    return successResponse_({
+      message: '已登錄「' + typeDef.name + '」於 ' + auditDate + ' 完成稽核',
+      centerType: delta.centerType,
+      centerSummary: delta.centerSummary,
+    });
   } catch (error) {
     return errorResponse_(error.message);
   }
@@ -523,7 +594,12 @@ function deleteCenterAuditRecord(typeId, auditDate) {
     if (!removeCenterRecord(typeId, auditDate)) {
       return errorResponse_('找不到「' + typeDef.name + '」於 ' + auditDate + ' 的紀錄，可能已被刪除');
     }
-    return successResponse_({ message: '已刪除「' + typeDef.name + '」於 ' + auditDate + ' 的稽核紀錄' });
+    const delta = centerDeltaFor_(typeId);
+    return successResponse_({
+      message: '已刪除「' + typeDef.name + '」於 ' + auditDate + ' 的稽核紀錄',
+      centerType: delta.centerType,
+      centerSummary: delta.centerSummary,
+    });
   } catch (error) {
     return errorResponse_(error.message);
   }
@@ -549,7 +625,13 @@ function addTriggerEvent(eventDate, category, description) {
       { eventDate: eventDate, category: category, description: description || '' },
       Session.getActiveUser().getEmail() || ''
     );
-    return successResponse_({ eventId: eventId, message: '已登記觸發事由「' + category + '」，組織與人員項目產生待辦' });
+    const delta = centerDeltaFor_('ORG');
+    return successResponse_({
+      eventId: eventId,
+      message: '已登記觸發事由「' + category + '」，組織與人員項目產生待辦',
+      centerType: delta.centerType,
+      centerSummary: delta.centerSummary,
+    });
   } catch (error) {
     return errorResponse_(error.message);
   }
@@ -564,7 +646,12 @@ function deleteTriggerEvent(eventId) {
     if (!removeTriggerEvent(eventId)) {
       return errorResponse_('找不到此觸發事由，可能已被刪除');
     }
-    return successResponse_({ message: '已刪除觸發事由' });
+    const delta = centerDeltaFor_('ORG');
+    return successResponse_({
+      message: '已刪除觸發事由',
+      centerType: delta.centerType,
+      centerSummary: delta.centerSummary,
+    });
   } catch (error) {
     return errorResponse_(error.message);
   }
@@ -711,12 +798,15 @@ function recordAudits(stationCodes, year, auditDateText) {
       });
     }
 
+    const delta = stationDeltaFor_(stationCodes);
     return successResponse_({
       added: result.added,
       skipped: result.skipped,
       message: result.skipped.length > 0
         ? '已登錄 ' + result.added + ' 間；' + result.skipped.length + ' 間於 ' + auditYear + ' 年已有紀錄，自動略過'
         : '已登錄 ' + result.added + ' 間駐站為 ' + auditYear + ' 年已稽核',
+      stations: delta.stations,
+      summary: delta.summary,
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -736,7 +826,12 @@ function deleteAuditRecord(stationCode, year) {
     if (!removed) {
       return errorResponse_('找不到 ' + stationCode + ' 於 ' + year + ' 年的稽核紀錄，可能已被刪除');
     }
-    return successResponse_({ message: '已刪除 ' + stationCode + ' 的 ' + year + ' 年稽核紀錄' });
+    const delta = stationDeltaFor_([stationCode]);
+    return successResponse_({
+      message: '已刪除 ' + stationCode + ' 的 ' + year + ' 年稽核紀錄',
+      stations: delta.stations,
+      summary: delta.summary,
+    });
   } catch (error) {
     return errorResponse_(error.message);
   }

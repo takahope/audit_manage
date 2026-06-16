@@ -491,6 +491,52 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .loading-text { font-size: 14px; color: var(--color-muted); }
 
+    /* ===== 處理中進度條（置中卡片遮罩，蓋住彈窗與整頁） ===== */
+    .progress-overlay {
+      position: fixed; inset: 0;
+      background: rgba(31, 58, 46, .32);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 500; padding: var(--space-4);
+      opacity: 0; pointer-events: none;
+      transition: opacity .25s ease;
+    }
+    .progress-overlay.show { opacity: 1; pointer-events: auto; }
+    .progress-card {
+      background: var(--color-card);
+      border: 1px solid var(--color-border);
+      border-top: 3px solid var(--color-accent);
+      padding: var(--space-5) var(--space-5) var(--space-4);
+      width: min(420px, 90vw);
+      box-shadow: 0 18px 48px rgba(31, 58, 46, .22);
+      transform: translateY(8px);
+      transition: transform .25s ease;
+    }
+    .progress-overlay.show .progress-card { transform: translateY(0); }
+    .progress-seal {
+      width: 40px; height: 40px; margin: 0 auto var(--space-3);
+      border: 3px solid var(--color-accent-soft);
+      border-top-color: var(--color-accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    .progress-seal.done {
+      animation: none; border-color: var(--color-primary);
+      position: relative;
+    }
+    .progress-seal.done::after {
+      content: '✓'; position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--color-primary); font-size: 22px; font-weight: 700;
+    }
+    .progress-track-lg { height: 8px; background: var(--color-primary-soft); border-radius: 4px; overflow: hidden; }
+    .progress-fill-lg {
+      height: 100%; width: 0; border-radius: 4px;
+      background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+    }
+    .progress-meta { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); margin-top: var(--space-3); }
+    .progress-text { font-size: 14px; color: var(--color-text); min-height: 20px; transition: opacity .2s ease; }
+    .progress-percent { font-family: var(--font-data); font-size: 13px; color: var(--color-muted); flex-shrink: 0; }
+
     .error-state, .empty-state {
       background: var(--color-card); border: 1px solid var(--color-border);
       padding: var(--space-5); text-align: center;
@@ -692,6 +738,18 @@
     <div class="loading-text">正在讀取駐站與稽核紀錄……</div>
   </div>
 
+  <!-- 處理中進度條：所有寫入後端的操作送出時顯示 -->
+  <div class="progress-overlay" id="progress-overlay">
+    <div class="progress-card">
+      <div class="progress-seal" id="progress-seal"></div>
+      <div class="progress-track-lg"><div class="progress-fill-lg" id="progress-fill"></div></div>
+      <div class="progress-meta">
+        <span class="progress-text" id="progress-text">正在處理…</span>
+        <span class="progress-percent" id="progress-percent">0%</span>
+      </div>
+    </div>
+  </div>
+
   <script>
     // 本機預覽（無 GAS 環境）時載入真實的週期邏輯，讓 mock 與後端共用同一套純函式；
     // GAS 部署環境不會執行此行，邏輯一律走後端。
@@ -763,19 +821,173 @@
     }
 
     // =============================================
+    // 處理中進度條（送出寫入後端時顯示，營造「正在處理」的踏實感）
+    // 規格：5 秒跑到 90%、每秒輪播文字、伺服器回應後補到 100%；最短顯示 1.8 秒。
+    // =============================================
+    const PROGRESS_MESSAGES = {
+      assign:  ['正在確認稽核人員…', '正在寫入稽核排程…', '正在同步 Google 行事曆…', '正在更新覆蓋率…', '即將完成…'],
+      record:  ['正在核對稽核日期…', '正在登錄稽核紀錄…', '正在重新計算週期狀態…', '正在更新覆蓋率…', '即將完成…'],
+      center:  ['正在確認稽核項目…', '正在寫入排程…', '正在同步 Google 行事曆…', '正在更新期別狀態…', '即將完成…'],
+      remove:  ['正在確認操作…', '正在移除排程與行事曆事件…', '正在重新計算狀態…', '即將完成…'],
+      trigger: ['正在登記觸發事由…', '正在更新組織與人員待辦…', '即將完成…'],
+      global:  ['正在套用設定…', '正在重新評估所有駐站…', '正在重算覆蓋率…', '即將完成…'],
+    };
+    const PROGRESS_MIN_MS = 1800; // 最短顯示時間，確保使用者看清輪播文字
+    const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const progressState = { startTime: 0, rotateTimer: null, settleTimer: null, active: false };
+
+    function showProgress(messages) {
+      const overlay = document.getElementById('progress-overlay');
+      const fill = document.getElementById('progress-fill');
+      const text = document.getElementById('progress-text');
+      const percent = document.getElementById('progress-percent');
+      const seal = document.getElementById('progress-seal');
+      const list = messages && messages.length ? messages : PROGRESS_MESSAGES.global;
+
+      clearTimeout(progressState.settleTimer);
+      clearInterval(progressState.rotateTimer);
+      seal.className = 'progress-seal';
+      progressState.startTime = Date.now();
+      progressState.active = true;
+
+      // 重置到 0%（關閉 transition 避免上次的殘影回拉動畫）
+      fill.style.transition = 'none';
+      fill.style.width = '0%';
+      percent.textContent = '0%';
+      text.textContent = list[0];
+      overlay.classList.add('show');
+
+      // 下一幀啟動「5 秒爬到 90%」；reduced-motion 直接定位不做補間
+      requestAnimationFrame(function () {
+        if (prefersReducedMotion) {
+          fill.style.transition = 'none';
+          fill.style.width = '90%';
+        } else {
+          fill.style.transition = 'width 5s cubic-bezier(.16,.84,.44,1)';
+          fill.style.width = '90%';
+        }
+      });
+      // 進度數字獨立補間（與寬度動畫脫鉤，確保百分比讀數平滑上升到 90）
+      animatePercentTo_(90, 5000);
+
+      // 每秒輪播文字；跑完一輪停在最後一句（「即將完成…」）
+      let idx = 0;
+      progressState.rotateTimer = setInterval(function () {
+        idx++;
+        if (idx >= list.length) { clearInterval(progressState.rotateTimer); return; }
+        text.style.opacity = '0';
+        setTimeout(function () { text.textContent = list[idx]; text.style.opacity = '1'; }, 160);
+      }, 1000);
+    }
+
+    /** 進度百分比讀數補間（純數字，與 CSS 寬度動畫分離） */
+    function animatePercentTo_(target, duration) {
+      const percent = document.getElementById('progress-percent');
+      clearInterval(animatePercentTo_._timer);
+      if (prefersReducedMotion) { percent.textContent = target + '%'; return; }
+      const start = Number((percent.textContent || '0').replace('%', '')) || 0;
+      const t0 = Date.now();
+      animatePercentTo_._timer = setInterval(function () {
+        const p = Math.min(1, (Date.now() - t0) / duration);
+        const val = Math.round(start + (target - start) * p);
+        percent.textContent = val + '%';
+        if (p >= 1) clearInterval(animatePercentTo_._timer);
+      }, 50);
+    }
+
+    /** 成功收尾：補足最短顯示後補到 100%、打勾、淡出。回傳 Promise 供串接 */
+    function finishProgress() {
+      return settleProgress_(true);
+    }
+
+    /** 失敗收尾：補足最短顯示後直接淡出（錯誤訊息交由 toast 呈現） */
+    function failProgress() {
+      return settleProgress_(false);
+    }
+
+    function settleProgress_(success) {
+      return new Promise(function (resolve) {
+        if (!progressState.active) { resolve(); return; }
+        const elapsed = Date.now() - progressState.startTime;
+        const wait = Math.max(0, PROGRESS_MIN_MS - elapsed);
+        progressState.settleTimer = setTimeout(function () {
+          clearInterval(progressState.rotateTimer);
+          clearInterval(animatePercentTo_._timer);
+          const overlay = document.getElementById('progress-overlay');
+          const fill = document.getElementById('progress-fill');
+          const text = document.getElementById('progress-text');
+          const percent = document.getElementById('progress-percent');
+          const seal = document.getElementById('progress-seal');
+
+          if (success) {
+            fill.style.transition = prefersReducedMotion ? 'none' : 'width .3s ease';
+            fill.style.width = '100%';
+            percent.textContent = '100%';
+            seal.className = 'progress-seal done';
+            text.textContent = '處理完成';
+          }
+          // 短暫停留讓「完成」可見，再淡出
+          setTimeout(function () {
+            overlay.classList.remove('show');
+            progressState.active = false;
+            resolve();
+          }, success ? 420 : 0);
+        }, wait);
+      });
+    }
+
+    /**
+     * 統一寫入流程（部分更新版）：進度條 → 等後端 → 收尾 → 套用單卡更新 → toast。
+     * @param {string[]} messages 輪播文字組
+     * @param {Promise} promise callServer(...) 回傳的 Promise
+     * @param {Function} applyDelta 成功時的部分更新函式（applyStationDelta／applyCenterDelta）
+     */
+    function runWrite(messages, promise, applyDelta) {
+      showProgress(messages);
+      return promise
+        .then(function (result) {
+          return finishProgress().then(function () {
+            applyDelta(result);
+            if (result && result.message) showToast(result.message, false);
+          });
+        })
+        .catch(function (err) {
+          return failProgress().then(function () { showToast(err.message, true); });
+        });
+    }
+
+    /**
+     * 統一寫入流程（全量重載版）：用於影響全部駐站的全域操作（模式切換／起始年／匯入）。
+     * 進度條期間於背景重抓並重繪整頁，收尾後才淡出，避免二次 loading 閃爍。
+     */
+    function runWriteReload(messages, promise) {
+      showProgress(messages);
+      let msg = '';
+      return promise
+        .then(function (result) { msg = result && result.message; return fetchAndRender_(); })
+        .then(function () { return finishProgress(); })
+        .then(function () { if (msg) showToast(msg, false); })
+        .catch(function (err) { return failProgress().then(function () { showToast(err.message, true); }); });
+    }
+
+    // =============================================
     // 載入與渲染
     // =============================================
     function loadDashboard() {
       document.getElementById('loading').classList.remove('hidden');
-      callServer('getAuditDashboard')
-        .then(function (data) {
-          dashboard = data;
-          pruneStaleSelections_();
-          renderAll();
-          refreshHistoryBody_(); // 歷年彈窗開著時，以最新資料更新清單
-        })
+      fetchAndRender_()
         .catch(function (err) { renderError(err.message); })
         .finally(function () { document.getElementById('loading').classList.add('hidden'); });
+    }
+
+    /** 抓取並重繪整份儀表板（不管理 loading 遮罩，供 loadDashboard 與全域寫入共用） */
+    function fetchAndRender_() {
+      return callServer('getAuditDashboard').then(function (data) {
+        dashboard = data;
+        pruneStaleSelections_();
+        renderAll();
+        refreshHistoryBody_(); // 歷年彈窗開著時，以最新資料更新清單
+      });
     }
 
     /** 重載後清掉已不存在或已不適用的勾選 */
@@ -993,7 +1205,13 @@
     }
 
     function bindCardEvents() {
-      document.getElementById('content-root').querySelectorAll('[data-action]').forEach(function (el) {
+      // 逐卡綁定，讓部分更新（applyStationDelta）能對單張替換的卡片重新綁定，
+      // 不必整段重綁、也不會重複 addEventListener。
+      document.getElementById('content-root').querySelectorAll('.station-card').forEach(bindStationCardEvents);
+    }
+
+    function bindStationCardEvents(card) {
+      card.querySelectorAll('[data-action]').forEach(function (el) {
         const action = el.dataset.action;
         const code = el.dataset.code;
         if (action === 'select') {
@@ -1021,12 +1239,82 @@
       });
 
       // 點擊卡片任意非互動區域 → 開啟歷年稽核紀錄
-      document.getElementById('content-root').querySelectorAll('.station-card').forEach(function (card) {
-        card.addEventListener('click', function (e) {
-          if (e.target.closest('input, button, label, .members-toggle')) return;
-          openHistoryModal('station', card.dataset.code);
-        });
+      card.addEventListener('click', function (e) {
+        if (e.target.closest('input, button, label, .members-toggle')) return;
+        openHistoryModal('station', card.dataset.code);
       });
+    }
+
+    // =============================================
+    // 部分更新：以儲存 API 回傳的單卡資料就地替換，避免整頁重載
+    // =============================================
+    /** 屬性選擇器值轉義（駐站代碼／類型 ID 多為英數與連字號，仍防雙引號意外） */
+    function attrSelector_(value) {
+      return String(value).replace(/"/g, '\\"');
+    }
+
+    /** 將更新後的單站寫回記憶體 dashboard（依 code 比對，認證旗標穩定故就地替換） */
+    function replaceStationInDashboard_(st) {
+      const arrays = [dashboard.certifiedStations, dashboard.normalStations];
+      for (let k = 0; k < arrays.length; k++) {
+        const i = arrays[k].findIndex(function (s) { return s.code === st.code; });
+        if (i !== -1) { arrays[k][i] = st; return; }
+      }
+      (st.isCertified ? dashboard.certifiedStations : dashboard.normalStations).push(st);
+    }
+
+    /**
+     * 套用駐站儲存後的部分更新：替換受影響卡片 + 摘要列，保留捲動與其他卡片狀態。
+     * @param {{station?: Object, stations?: Array, summary?: Object}} result
+     */
+    function applyStationDelta(result) {
+      const updated = result && (result.stations || (result.station ? [result.station] : []));
+      if (!updated || updated.length === 0) { loadDashboard(); return; } // 契約異常 → 退回全量
+
+      updated.forEach(replaceStationInDashboard_);
+      if (result.summary) dashboard.summary = result.summary;
+
+      pruneStaleSelections_();
+      renderSummary();
+
+      let missing = false;
+      updated.forEach(function (st) {
+        const card = document.querySelector('.station-card[data-code="' + attrSelector_(st.code) + '"]');
+        if (!card) { missing = true; return; }
+        const temp = document.createElement('div');
+        temp.innerHTML = buildStationCard(st);
+        const newCard = temp.firstElementChild;
+        card.replaceWith(newCard);
+        bindStationCardEvents(newCard);
+      });
+
+      updateActionBar();
+      refreshHistoryBody_();           // 歷年彈窗開著時同步刷新
+      if (missing) renderSections();    // 卡片不在 DOM（極少數）→ 整段重繪
+    }
+
+    /**
+     * 套用中心項目儲存後的部分更新：替換該卡片 + 中心摘要列。
+     * @param {{centerType?: Object, centerSummary?: Object}} result
+     */
+    function applyCenterDelta(result) {
+      const ct = result && result.centerType;
+      if (!ct) { loadDashboard(); return; }
+
+      const i = dashboard.centerTypes.findIndex(function (t) { return t.id === ct.id; });
+      if (i !== -1) dashboard.centerTypes[i] = ct; else dashboard.centerTypes.push(ct);
+      if (result.centerSummary) dashboard.centerSummary = result.centerSummary;
+
+      renderCenterSummary_();
+
+      const card = document.querySelector('.center-card[data-type="' + attrSelector_(ct.id) + '"]');
+      if (!card) { renderCenter(); return; }
+      const temp = document.createElement('div');
+      temp.innerHTML = buildCenterCard(ct);
+      const newCard = temp.firstElementChild;
+      card.replaceWith(newCard);
+      bindCenterCardEvents(newCard);
+      refreshHistoryBody_();
     }
 
     function renderError(message) {
@@ -1058,6 +1346,16 @@
     };
 
     function renderCenter() {
+      renderCenterSummary_();
+      document.getElementById('center-content-root').innerHTML =
+        '<div class="center-grid">' +
+        dashboard.centerTypes.slice().sort((a, b) => a.order - b.order).map(buildCenterCard).join('') +
+        '</div>';
+      bindCenterEvents();
+    }
+
+    /** 中心摘要列（與卡片格線分離，供部分更新單獨刷新） */
+    function renderCenterSummary_() {
       const s = dashboard.centerSummary;
       document.getElementById('center-summary-root').innerHTML =
         '<div class="summary-bar" style="grid-template-columns:1fr">' +
@@ -1068,12 +1366,6 @@
             '<div class="stat-card" style="border-top:3px solid var(--color-danger)"><span class="num" style="color:var(--color-danger)">' + s.overdueOrTodoCount + '</span><span class="label">逾期／待辦</span></div>' +
           '</div>' +
         '</div>';
-
-      document.getElementById('center-content-root').innerHTML =
-        '<div class="center-grid">' +
-        dashboard.centerTypes.slice().sort((a, b) => a.order - b.order).map(buildCenterCard).join('') +
-        '</div>';
-      bindCenterEvents();
     }
 
     function buildCenterCard(type) {
@@ -1171,7 +1463,12 @@
     }
 
     function bindCenterEvents() {
-      document.getElementById('center-content-root').querySelectorAll('[data-action]').forEach(function (el) {
+      // 逐卡綁定，供 applyCenterDelta 單張替換後重新綁定。
+      document.getElementById('center-content-root').querySelectorAll('.center-card').forEach(bindCenterCardEvents);
+    }
+
+    function bindCenterCardEvents(card) {
+      card.querySelectorAll('[data-action]').forEach(function (el) {
         const action = el.dataset.action;
         if (action === 'plan-center') {
           el.addEventListener('click', function () { openCenterForm('plan', el.dataset.type); });
@@ -1189,11 +1486,9 @@
       });
 
       // 點擊卡片任意非互動區域 → 開啟該類型歷年稽核紀錄
-      document.getElementById('center-content-root').querySelectorAll('.center-card').forEach(function (card) {
-        card.addEventListener('click', function (e) {
-          if (e.target.closest('button, input, label, a, .t-del')) return;
-          openHistoryModal('center', card.dataset.type);
-        });
+      card.addEventListener('click', function (e) {
+        if (e.target.closest('button, input, label, a, .t-del')) return;
+        openHistoryModal('center', card.dataset.type);
       });
     }
 
@@ -1331,19 +1626,11 @@
 
       const dateText = dateValue.replace(/-/g, '/');
       const typeId = centerFormState.typeId;
-      const btn = this;
-      btn.disabled = true;
       const call = isPlan
         ? callServer('planCenterAudit', typeId, checked, dateText, reason)
         : callServer('recordCenterAudit', typeId, dateText, checked, reason, '');
-      call
-        .then(function (result) {
-          showToast(result.message, false);
-          closeCenterForm();
-          loadDashboard();
-        })
-        .catch(function (err) { errorEl.textContent = err.message; })
-        .finally(function () { btn.disabled = false; });
+      closeCenterForm();
+      runWrite(PROGRESS_MESSAGES.center, call, applyCenterDelta);
     });
 
     function confirmCancelCenterPlan(typeId) {
@@ -1355,10 +1642,7 @@
         confirmLabel: '確認取消排程',
         danger: true,
         onConfirm: function () {
-          return callServer('cancelCenterPlan', typeId).then(function (result) {
-            showToast(result.message, false);
-            loadDashboard();
-          });
+          runWrite(PROGRESS_MESSAGES.remove, callServer('cancelCenterPlan', typeId), applyCenterDelta);
         },
       });
     }
@@ -1372,10 +1656,8 @@
         confirmLabel: '確認刪除',
         danger: true,
         onConfirm: function () {
-          return callServer('deleteCenterAuditRecord', typeId, auditDate).then(function (result) {
-            showToast(result.message, false);
-            loadDashboard();
-          });
+          runWrite(PROGRESS_MESSAGES.remove,
+            callServer('deleteCenterAuditRecord', typeId, auditDate), applyCenterDelta);
         },
       });
     }
@@ -1402,19 +1684,12 @@
       const dateValue = document.getElementById('trigger-date').value;
       if (!dateValue) { errorEl.textContent = '請選擇事件日期。'; return; }
 
-      const btn = this;
-      btn.disabled = true;
-      callServer('addTriggerEvent',
+      const call = callServer('addTriggerEvent',
         dateValue.replace(/-/g, '/'),
         document.getElementById('trigger-category').value,
-        document.getElementById('trigger-desc').value.trim())
-        .then(function (result) {
-          showToast(result.message, false);
-          document.getElementById('trigger-overlay').classList.remove('open');
-          loadDashboard();
-        })
-        .catch(function (err) { errorEl.textContent = err.message; })
-        .finally(function () { btn.disabled = false; });
+        document.getElementById('trigger-desc').value.trim());
+      document.getElementById('trigger-overlay').classList.remove('open');
+      runWrite(PROGRESS_MESSAGES.trigger, call, applyCenterDelta);
     });
 
     function confirmDeleteTrigger(eventId) {
@@ -1424,10 +1699,7 @@
         confirmLabel: '確認刪除',
         danger: true,
         onConfirm: function () {
-          return callServer('deleteTriggerEvent', eventId).then(function (result) {
-            showToast(result.message, false);
-            loadDashboard();
-          });
+          runWrite(PROGRESS_MESSAGES.remove, callServer('deleteTriggerEvent', eventId), applyCenterDelta);
         },
       });
     }
@@ -1454,11 +1726,7 @@
         confirmLabel: '確認切換',
         danger: false,
         onConfirm: function () {
-          return callServer('setCycleMode', targetMode)
-            .then(function (result) {
-              showToast(result.message, false);
-              loadDashboard();
-            });
+          runWriteReload(PROGRESS_MESSAGES.global, callServer('setCycleMode', targetMode));
         },
       });
     }
@@ -1514,16 +1782,10 @@
         return;
       }
 
-      const btn = this;
-      btn.disabled = true;
-      callServer('saveStationAssignment', assigningCode, dashboard.currentYear, checked, dateValue.replace(/-/g, '/'))
-        .then(function (result) {
-          showToast(result.message, false);
-          closeAssignModal();
-          loadDashboard();
-        })
-        .catch(function (err) { errorEl.textContent = err.message; })
-        .finally(function () { btn.disabled = false; });
+      const code = assigningCode, year = dashboard.currentYear;
+      const call = callServer('saveStationAssignment', code, year, checked, dateValue.replace(/-/g, '/'));
+      closeAssignModal();
+      runWrite(PROGRESS_MESSAGES.assign, call, applyStationDelta);
     });
 
     // =============================================
@@ -1589,16 +1851,10 @@
       if (!validateBackfillDate_()) { errorEl.textContent = '請修正日期後再送出。'; return; }
 
       const dateText = dateValue.replace(/-/g, '/');
-      const btn = this;
-      btn.disabled = true;
-      callServer('recordAudits', [backfillingCode], Number(dateText.slice(0, 4)), dateText)
-        .then(function (result) {
-          showToast(result.message, false);
-          closeBackfillModal();
-          loadDashboard();
-        })
-        .catch(function (err) { errorEl.textContent = err.message; })
-        .finally(function () { btn.disabled = false; });
+      const code = backfillingCode;
+      const call = callServer('recordAudits', [code], Number(dateText.slice(0, 4)), dateText);
+      closeBackfillModal();
+      runWrite(PROGRESS_MESSAGES.record, call, applyStationDelta);
     });
 
     // ---- 歷年稽核紀錄（點擊駐站卡片開啟） ----
@@ -1765,10 +2021,7 @@
         confirmLabel: '確認匯入',
         danger: false,
         onConfirm: function () {
-          return callServer('importAuditRecords', scope, csvText).then(function (result) {
-            showToast(result.message, false);
-            loadDashboard();
-          });
+          runWriteReload(PROGRESS_MESSAGES.global, callServer('importAuditRecords', scope, csvText));
         },
       });
     }
@@ -1794,11 +2047,7 @@
         danger: false,
         onConfirm: function () {
           const year = Number(document.getElementById('cycle-start-select').value);
-          return callServer('setCycleStartYear', year)
-            .then(function (result) {
-              showToast(result.message, false);
-              loadDashboard();
-            });
+          runWriteReload(PROGRESS_MESSAGES.global, callServer('setCycleStartYear', year));
         },
       });
       // 即時預覽選定起始年形成的目前週期
@@ -1829,11 +2078,8 @@
         confirmLabel: '確認取消分派',
         danger: true,
         onConfirm: function () {
-          return callServer('cancelAssignment', stationCode, dashboard.currentYear)
-            .then(function (result) {
-              showToast(result.message, false);
-              loadDashboard();
-            });
+          runWrite(PROGRESS_MESSAGES.remove,
+            callServer('cancelAssignment', stationCode, dashboard.currentYear), applyStationDelta);
         },
       });
     }
@@ -1879,12 +2125,9 @@
         confirmLabel: '確認登錄 ' + stations.length + ' 間',
         danger: false,
         onConfirm: function () {
-          return callServer('recordAudits', Array.from(selectedCodes), year)
-            .then(function (result) {
-              showToast(result.message, false);
-              selectedCodes.clear();
-              loadDashboard();
-            });
+          const codes = Array.from(selectedCodes);
+          selectedCodes.clear();
+          runWrite(PROGRESS_MESSAGES.record, callServer('recordAudits', codes, year), applyStationDelta);
         },
       });
     }
@@ -1900,11 +2143,8 @@
         confirmLabel: '確認刪除',
         danger: true,
         onConfirm: function () {
-          return callServer('deleteAuditRecord', stationCode, year)
-            .then(function (result) {
-              showToast(result.message, false);
-              loadDashboard();
-            });
+          runWrite(PROGRESS_MESSAGES.remove,
+            callServer('deleteAuditRecord', stationCode, year), applyStationDelta);
         },
       });
     }
@@ -1936,11 +2176,8 @@
     document.getElementById('modal-confirm').addEventListener('click', function () {
       if (!modalConfirmHandler) return;
       const handler = modalConfirmHandler;
-      const btn = this;
-      btn.disabled = true;
-      handler()
-        .catch(function (err) { showToast(err.message, true); })
-        .finally(function () { btn.disabled = false; closeModal(); });
+      closeModal();   // 先收確認框，露出進度條；handler 內部以 runWrite 自理進度與錯誤
+      handler();
     });
 
     document.getElementById('btn-record').addEventListener('click', confirmRecordAudits);
@@ -2004,6 +2241,18 @@
       const cycle = getCycleForYear(currentYear, state.cycleStartYear, 3);
       const certifiedCycle = getCycleForYear(currentYear, state.cycleStartYear, 2); // 認證站兩年排程輪
 
+      // ---- 預覽用：延遲回應 + 部分更新 delta（與後端 stationDeltaFor_／centerDeltaFor_ 對齊） ----
+      function delayed_(obj, ms) { return new Promise(function (r) { setTimeout(function () { r(obj); }, ms); }); }
+      function stationDelta_(codes, message) {
+        const d = computeDashboard_();
+        const all = d.certifiedStations.concat(d.normalStations);
+        return { message: message, stations: all.filter(function (s) { return codes.indexOf(s.code) >= 0; }), summary: d.summary };
+      }
+      function centerDelta_(typeId, message) {
+        const d = computeDashboard_();
+        return { message: message, centerType: d.centerTypes.find(function (t) { return t.id === typeId; }) || null, centerSummary: d.centerSummary };
+      }
+
       if (fnName === 'setCycleMode') {
         state.mode = args[0];
         return Promise.resolve({ mode: state.mode, message: '【預覽模式】已切換週期模式' });
@@ -2016,12 +2265,12 @@
         // 與後端同邏輯：未帶日期且登錄今年時自動填當天
         const auditDate = args[2] || (args[1] === currentYear ? new Date().toISOString().slice(0, 10).replace(/-/g, '/') : '');
         args[0].forEach(code => state.records.push({ stationCode: code, year: args[1], auditDate: auditDate }));
-        return Promise.resolve({ message: '【預覽模式】已登錄 ' + args[0].length + ' 間駐站', added: args[0].length, skipped: [] });
+        return delayed_(stationDelta_(args[0], '【預覽模式】已登錄 ' + args[0].length + ' 間駐站'), 600);
       }
       if (fnName === 'deleteAuditRecord') {
         const idx = state.records.findIndex(r => r.stationCode === args[0] && r.year === args[1]);
         if (idx >= 0) state.records.splice(idx, 1);
-        return Promise.resolve({ message: '【預覽模式】已刪除紀錄' });
+        return delayed_(stationDelta_([args[0]], '【預覽模式】已刪除紀錄'), 600);
       }
       if (fnName === 'saveStationAssignment') {
         const emailToName = {};
@@ -2055,11 +2304,11 @@
         if (date && emails.length > 0) msg = '【預覽模式】已分派 ' + code + calMsg;
         else if (date) msg = '【預覽模式】已排定日期（待指派人員）' + calMsg;
         else msg = '【預覽模式】已指派人員（待定日期，僅寫入試算表，尚未進日曆）';
-        return Promise.resolve({ message: msg });
+        return delayed_(stationDelta_([code], msg), 600);
       }
       if (fnName === 'cancelAssignment') {
         state.assignments = state.assignments.filter(p => !(p.stationCode === args[0] && p.year === args[1]));
-        return Promise.resolve({ message: '【預覽模式】已取消分派，已同步行事曆' });
+        return delayed_(stationDelta_([args[0]], '【預覽模式】已取消分派，已同步行事曆'), 600);
       }
 
       // ---- 中心稽核 API（與 code.js 同邏輯的精簡版）----
@@ -2085,11 +2334,11 @@
         if (date && emails.length > 0) msg = '【預覽模式】已排定「' + typeNameOf(args[0]) + '」於 ' + date + ' 稽核' + calMsg;
         else if (date) msg = '【預覽模式】已為「' + typeNameOf(args[0]) + '」排定日期（待指派人員）' + calMsg;
         else msg = '【預覽模式】已為「' + typeNameOf(args[0]) + '」指派人員（待定日期，尚未進日曆）';
-        return Promise.resolve({ message: msg });
+        return delayed_(centerDelta_(args[0], msg), 600);
       }
       if (fnName === 'cancelCenterPlan') {
         state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]);
-        return Promise.resolve({ message: '【預覽模式】已取消排程，已同步行事曆' });
+        return delayed_(centerDelta_(args[0], '【預覽模式】已取消排程，已同步行事曆'), 600);
       }
       if (fnName === 'recordCenterAudit') {
         if (state.centerRecords.some(r => r.typeId === args[0] && r.auditDate === args[1])) {
@@ -2097,19 +2346,19 @@
         }
         state.centerRecords.push({ typeId: args[0], auditDate: args[1], auditorNames: auditorNamesOf(args[2] || []), reason: args[3] || '', note: '' });
         state.centerPlans = state.centerPlans.filter(p => p.typeId !== args[0]); // 完成後清排程
-        return Promise.resolve({ message: '【預覽模式】已登錄「' + typeNameOf(args[0]) + '」於 ' + args[1] + ' 完成稽核' });
+        return delayed_(centerDelta_(args[0], '【預覽模式】已登錄「' + typeNameOf(args[0]) + '」於 ' + args[1] + ' 完成稽核'), 600);
       }
       if (fnName === 'deleteCenterAuditRecord') {
         state.centerRecords = state.centerRecords.filter(r => !(r.typeId === args[0] && r.auditDate === args[1]));
-        return Promise.resolve({ message: '【預覽模式】已刪除紀錄' });
+        return delayed_(centerDelta_(args[0], '【預覽模式】已刪除紀錄'), 600);
       }
       if (fnName === 'addTriggerEvent') {
         state.triggers.push({ eventId: 'TRG-' + Date.now(), eventDate: args[0], category: args[1], description: args[2] || '' });
-        return Promise.resolve({ message: '【預覽模式】已登記觸發事由「' + args[1] + '」' });
+        return delayed_(centerDelta_('ORG', '【預覽模式】已登記觸發事由「' + args[1] + '」'), 600);
       }
       if (fnName === 'deleteTriggerEvent') {
         state.triggers = state.triggers.filter(t => t.eventId !== args[0]);
-        return Promise.resolve({ message: '【預覽模式】已刪除觸發事由' });
+        return delayed_(centerDelta_('ORG', '【預覽模式】已刪除觸發事由'), 600);
       }
       if (fnName === 'exportAuditRecords' || fnName === 'importAuditRecords') {
         // 與 code.js getExportView_ 同構：駐站／中心各自的欄位、紀錄、去重鍵與寫入
@@ -2161,6 +2410,10 @@
       }
 
       // getAuditDashboard：與 code.js 相同的組裝流程
+      return delayed_(computeDashboard_(), 350);
+
+      // 組裝整份儀表板（部分更新 delta 亦複用此結果）；函式宣告在 mockServer 內提升
+      function computeDashboard_() {
       const assignmentByStation = {};
       state.assignments.forEach(p => { if (p.year === currentYear) assignmentByStation[p.stationCode] = p; });
 
@@ -2216,7 +2469,7 @@
         };
       });
 
-      return new Promise(resolve => setTimeout(() => resolve({
+      return {
         currentYear: currentYear, mode: state.mode, cycleStartYear: state.cycleStartYear, cycle: cycle, certifiedCycle: certifiedCycle, summary: summary, auditors: auditors,
         certifiedStations: evaluated.filter(s => s.isCertified),
         normalStations: evaluated.filter(s => !s.isCertified),
@@ -2224,7 +2477,8 @@
         centerSummary: buildCenterSummary(centerTypes),
         triggerCategories: TRIGGER_CATEGORIES,
         userEmail: 'preview@local',
-      }), 350));
+      };
+      }
     }
 
     // 啟動

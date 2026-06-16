@@ -659,12 +659,12 @@
     </div>
   </div>
 
-  <!-- 補登歷史紀錄 Modal -->
+  <!-- 登錄完成／補登紀錄 Modal -->
   <div class="modal-overlay" id="backfill-overlay">
     <div class="modal">
       <div class="modal-header" id="backfill-title"></div>
       <div class="modal-body">
-        <p>選擇實際稽核日期（同一駐站每年僅計一筆，已有紀錄的年度無法補登）。</p>
+        <p>登錄實際稽核日期（預設今天；選過去日期即為補登歷史）。同一駐站每年僅計一筆，已有紀錄的年度無法登錄；完成後若有排程將自動清除。</p>
         <div class="form-row">
           <label for="backfill-date">稽核日期</label>
           <input type="date" id="backfill-date">
@@ -674,7 +674,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-cancel" id="backfill-cancel">取消</button>
-        <button class="btn btn-confirm" id="backfill-save">補登此筆紀錄</button>
+        <button class="btn btn-confirm" id="backfill-save">登錄完成</button>
       </div>
     </div>
   </div>
@@ -933,23 +933,22 @@
         if (hasAuditors && hasDate) {
           infoClass = '';
           infoBody = '稽核人員：' + escapeHtml(a.auditorNames) + '　<span class="date">' + escapeHtml(a.plannedDate) + '</span>';
-          mainBtnLabel = '修改';
         } else if (hasDate) {
           infoClass = ' draft';
           infoBody = '<span class="badge badge-draft">待指派人員</span>　已排定 <span class="date">' + escapeHtml(a.plannedDate) + '</span>';
-          mainBtnLabel = '指派人員';
         } else {
           infoClass = ' draft';
           infoBody = '<span class="badge badge-draft">待定日期</span>　稽核人員：' + escapeHtml(a.auditorNames);
-          mainBtnLabel = '排定日期';
         }
+        // 已排程一律顯示「重新排定」（不論人員／日期是否完整），對齊中心稽核卡片
+        mainBtnLabel = '重新排定';
         assignmentInfoHtml = '<div class="assignment-info' + infoClass + '">' + infoBody + '</div>';
         actionButtons.push('<button class="btn-sm btn-edit-draft" data-action="assign" data-code="' + escapeHtml(station.code) + '">' + mainBtnLabel + '</button>');
-        actionButtons.push('<button class="btn-sm btn-remove" data-action="cancel-assignment" data-code="' + escapeHtml(station.code) + '">取消分派</button>');
+        actionButtons.push('<button class="btn-sm btn-remove" data-action="cancel-assignment" data-code="' + escapeHtml(station.code) + '">取消排定</button>');
       } else if (ev.status === 'CANDIDATE') {
-        actionButtons.push('<button class="btn-sm btn-assign" data-action="assign" data-code="' + escapeHtml(station.code) + '">分派稽核</button>');
+        actionButtons.push('<button class="btn-sm btn-assign" data-action="assign" data-code="' + escapeHtml(station.code) + '">排定稽核</button>');
       }
-      actionButtons.push('<button class="btn-sm btn-backfill" data-action="backfill" data-code="' + escapeHtml(station.code) + '">補登紀錄</button>');
+      actionButtons.push('<button class="btn-sm btn-backfill" data-action="backfill" data-code="' + escapeHtml(station.code) + '">登錄完成／補登</button>');
       const assignmentHtml = assignmentInfoHtml + '<div class="card-actions">' + actionButtons.join('') + '</div>';
 
       const expanded = expandedCodes.has(station.code);
@@ -1133,7 +1132,9 @@
       if (type.plan) {
         actions.push('<button class="btn-sm btn-edit-draft" data-action="plan-center" data-type="' + type.id + '">重新排定</button>');
         actions.push('<button class="btn-sm btn-remove" data-action="cancel-center-plan" data-type="' + type.id + '">取消排定</button>');
-      } else {
+      } else if (ev.status !== 'DONE') {
+        // 本期已完成（DONE）即隱藏「排定稽核」；待行事曆進入下一期、狀態回到 PENDING 才會再出現
+        // （半年制以「本期」為準，故本期完成後無法預先排下一期，符合「完成即隱藏」的取捨）
         actions.push('<button class="btn-sm btn-assign" data-action="plan-center" data-type="' + type.id + '">排定稽核</button>');
       }
       actions.push('<button class="btn-sm btn-backfill" data-action="record-center" data-type="' + type.id + '">登錄完成／補登</button>');
@@ -1469,7 +1470,7 @@
         a && a.auditorEmails ? String(a.auditorEmails).split(',').map(e => e.trim()).filter(Boolean) : []
       );
 
-      document.getElementById('assign-title').textContent = '分派稽核 — ' + station.name;
+      document.getElementById('assign-title').textContent = '排定稽核 — ' + station.name;
       document.getElementById('auditor-list').innerHTML = dashboard.auditors.length === 0
         ? '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的組員），請先確認人員職務配置。</label>'
         : dashboard.auditors.map(function (au) {
@@ -1530,9 +1531,11 @@
       if (!station) return;
       backfillingCode = stationCode;
 
-      document.getElementById('backfill-title').textContent = '補登稽核紀錄 — ' + station.name;
-      document.getElementById('backfill-date').value = '';
+      document.getElementById('backfill-title').textContent = '登錄完成／補登 — ' + station.name;
+      // 預設今天，最常見的「今天完成」可一鍵送出；選過去日期即為補登歷史
+      document.getElementById('backfill-date').value = new Date().toISOString().slice(0, 10);
       document.getElementById('backfill-hint').innerHTML = '';
+      validateBackfillDate_(); // 預填今天後先跑一次年度檢核提示
       document.getElementById('backfill-error').textContent = '';
       document.getElementById('backfill-overlay').classList.add('open');
     }
@@ -1617,7 +1620,7 @@
         if (!station) { closeHistoryModal(); return; }
         titleEl.textContent = '歷年稽核紀錄 — ' + station.name;
         bodyEl.innerHTML = renderStationHistoryRows_(station);
-        backfillBtn.textContent = '補登紀錄';
+        backfillBtn.textContent = '登錄完成／補登';
       } else {
         const type = dashboard.centerTypes.find(t => t.id === historyModalState.id);
         if (!type) { closeHistoryModal(); return; }
@@ -1630,7 +1633,7 @@
 
     function renderStationHistoryRows_(station) {
       if (station.auditRecords.length === 0) {
-        return '<p class="empty-hist">此駐站尚無稽核紀錄，可由下方「補登紀錄」新增。</p>';
+        return '<p class="empty-hist">此駐站尚無稽核紀錄，可由下方「登錄完成／補登」新增。</p>';
       }
       const countedYear = station.evaluation.countedYear;
       return '<ul class="history-list">' + station.auditRecords.map(function (r) {

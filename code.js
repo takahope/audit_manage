@@ -691,6 +691,24 @@ function recordAudits(stationCodes, year, auditDateText) {
     }));
 
     const result = appendAuditRecords(entries, Session.getActiveUser().getEmail() || '');
+
+    // 完成登錄後清除該年度的排程與其行事曆事件（與中心稽核 recordCenterAudit 一致）。
+    // 僅處理「實際寫入」的駐站（略過的代表早有紀錄，排程多半已清）；
+    // 涵蓋單卡「登錄完成／補登」與批次動作列登錄兩條路徑，避免排程殘留。
+    const recordedCodes = stationCodes.filter(code => result.skipped.indexOf(code) === -1);
+    if (recordedCodes.length > 0) {
+      const plansByCode = {};
+      getAssignments()
+        .filter(p => p.year === auditYear)
+        .forEach(p => { plansByCode[p.stationCode] = p; });
+      recordedCodes.forEach(code => {
+        const plan = plansByCode[code];
+        if (!plan) return;
+        if (plan.calendarEventId) syncCalendarDelete_(plan.calendarEventId);
+        removeAssignment(code, auditYear);
+      });
+    }
+
     return successResponse_({
       added: result.added,
       skipped: result.skipped,

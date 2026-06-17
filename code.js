@@ -223,6 +223,113 @@ function centerDeltaFor_(typeId) {
   };
 }
 
+// =============================================
+// API：認證駐站管理（維護精確 N 家的認證名單）
+// =============================================
+
+/**
+ * 讀取認證駐站管理所需資料：目前認證名單、所有可選駐站、應有家數。
+ * 各站附帶任期（tenures）與稽核年份（auditYears），供前端計算「認證次數」（規格 4.3）。
+ *
+ * @returns {string} JSON 回應
+ */
+function getCertifiedStationData() {
+  try {
+    requireAuditor_();
+    const stations = getStations();
+    const yearsByStation = {};
+    getAuditRecords().forEach(r => {
+      if (!yearsByStation[r.stationCode]) yearsByStation[r.stationCode] = [];
+      yearsByStation[r.stationCode].push(r.year);
+    });
+    const byName = function (a, b) {
+      return String(a.name || a.code).localeCompare(String(b.name || b.code), 'zh-Hant');
+    };
+    const options = stations.map(function (s) {
+      const auditYears = (yearsByStation[s.code] || []).slice().sort(function (a, b) { return a - b; });
+      const tenures = s.certifiedTenures || [];
+      return {
+        code: s.code,
+        name: s.name,
+        managerName: s.managerName || '',
+        isCertified: !!s.isCertified,
+        certifiedSince: s.certifiedSince || 0,
+        // 認證次數於後端計算（規格 4.3）——純函式僅後端可用，前端只顯示結果
+        certCount: countValidCertifications_(tenures, auditYears),
+      };
+    }).sort(byName);
+
+    return successResponse_({
+      expectedCount: ENV.CERTIFIED_STATION_COUNT,
+      externalTableReady: !!String(ENV.ISO_STATION_SPREADSHEET_ID || '').trim(),
+      currentCertified: options.filter(s => s.isCertified),
+      stationOptions: options,
+    });
+  } catch (error) {
+    return errorResponse_(error.message);
+  }
+}
+
+/**
+ * 更新認證駐站名單：須剛好 ENV.CERTIFIED_STATION_COUNT 家，
+ * 與目前名單比對算出新增／移除，寫入認證駐站紀錄表並同步 HR 組織架構樹 I 欄。
+ *
+ * @param {string[]} stationCodes - 選定的認證駐站代碼
+ * @returns {string} JSON 回應
+ */
+function saveCertifiedStations(stationCodes) {
+  try {
+    requireAuditor_();
+    if (!Array.isArray(stationCodes)) {
+      return errorResponse_('參數格式錯誤：認證駐站代碼應為陣列');
+    }
+    // 去空白＋去重
+    const codes = [];
+    const seen = {};
+    stationCodes.forEach(function (c) {
+      const code = String(c || '').trim();
+      if (code && !seen[code]) { seen[code] = true; codes.push(code); }
+    });
+
+    const expected = ENV.CERTIFIED_STATION_COUNT;
+    if (codes.length !== expected) {
+      return errorResponse_('認證駐站須剛好 ' + expected + ' 家，目前選了 ' + codes.length + ' 家');
+    }
+
+    const stationByCode = {};
+    getStations().forEach(s => { stationByCode[s.code] = s; });
+    const unknown = codes.filter(c => !stationByCode[c]);
+    if (unknown.length > 0) {
+      return errorResponse_('找不到駐站：' + unknown.join('、') + '，請重新整理後再試');
+    }
+
+    // 與目前名單比對算 added/removed
+    const oldCertified = getStations().filter(s => s.isCertified).map(s => s.code);
+    const newSet = {}; codes.forEach(c => { newSet[c] = true; });
+    const oldSet = {}; oldCertified.forEach(c => { oldSet[c] = true; });
+    const added = codes.filter(c => !oldSet[c]);
+    const removed = oldCertified.filter(c => !newSet[c]);
+    if (added.length === 0 && removed.length === 0) {
+      return errorResponse_('認證名單沒有異動，無須更新');
+    }
+
+    commitCertifiedRoster_(added, removed, resolveActor_());
+
+    return successResponse_({
+      message: '已更新認證駐站名單（新增 ' + added.length + ' 家、移除 ' + removed.length + ' 家）',
+    });
+  } catch (error) {
+    return errorResponse_(error.message);
+  }
+}
+
+/** 取得目前操作人的 email 與姓名（姓名以稽核人員名單比對，取不到退回 email）。 */
+function resolveActor_() {
+  const email = String(Session.getActiveUser().getEmail() || '').trim();
+  const auditor = getAuditors().find(a => a.email === email.toLowerCase());
+  return { email: email, name: auditor ? auditor.name : email };
+}
+
 /**
  * 整理單一駐站的稽核紀錄視圖：倒序清單＋「上次稽核」顯示文字。
  * 早期紀錄只有年度（稽核日期欄空），顯示退回「YYYY 年」。

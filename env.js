@@ -47,6 +47,9 @@ const ENV = {
   /** 補登歷史稽核紀錄的年度下限，防止誤植（如 226）汙染資料 */
   MIN_AUDIT_YEAR: 2000,
 
+  /** 認證駐站名單的應有家數（認證駐站管理：更新時須剛好選滿此數） */
+  CERTIFIED_STATION_COUNT: 6,
+
   /**
    * 稽核排程同步的 Google Calendar ID。
    * 留空 = 使用部署者的預設行事曆。

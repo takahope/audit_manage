@@ -463,6 +463,53 @@
     .period-hint { font-size: 12px; color: var(--color-muted); margin-top: var(--space-1); min-height: 18px; }
     .period-hint .warn { color: var(--color-danger); }
 
+    /* ===== 認證駐站管理 Modal ===== */
+    .modal.modal-wide { max-width: 680px; }
+    .cert-stat { font-size: 14px; color: var(--color-muted); margin: var(--space-2) 0 var(--space-3); }
+    .cert-stat strong { font-family: var(--font-data); font-size: 16px; color: var(--color-text); }
+    .cert-stat .full { color: var(--color-primary); }
+    .cert-stat .need { color: var(--color-danger); }
+    .cert-section-label { font-size: 13px; color: var(--color-muted); margin: var(--space-4) 0 var(--space-1); font-weight: 500; }
+    .cert-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+    .cert-slot {
+      border: 1px solid var(--color-border); border-left: 3px solid var(--color-accent);
+      background: var(--color-card); padding: var(--space-2) var(--space-3);
+      display: flex; align-items: center; gap: var(--space-2); min-height: 58px;
+    }
+    .cert-slot.empty {
+      border-left-color: var(--color-border); border-style: dashed;
+      color: var(--color-muted); justify-content: center; font-size: 13px;
+    }
+    .cert-slot .info { flex: 1; min-width: 0; }
+    .cert-slot .s-name { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+    .cert-slot .s-meta { font-family: var(--font-data); font-size: 11px; color: var(--color-muted); }
+    .cert-slot .s-manager { font-size: 12px; color: var(--color-muted); }
+    .cert-search {
+      width: 100%; box-sizing: border-box; font-family: var(--font-body); font-size: 14px;
+      padding: var(--space-2) var(--space-3); margin: var(--space-1) 0 var(--space-2);
+      border: 1px solid var(--color-border); border-radius: 2px; background: #fff; color: var(--color-text);
+    }
+    .cert-option-list { border: 1px solid var(--color-border); max-height: 230px; overflow-y: auto; }
+    .cert-option {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-2) var(--space-3); cursor: pointer;
+      border-bottom: 1px solid var(--color-primary-soft); font-size: 14px;
+    }
+    .cert-option:last-child { border-bottom: none; }
+    .cert-option:hover { background: var(--color-primary-soft); }
+    .cert-option.selected { background: var(--color-accent-soft); }
+    .cert-option .check { width: 16px; flex-shrink: 0; color: var(--color-accent); font-weight: 700; }
+    .cert-option .o-name { min-width: 0; }
+    .cert-option .o-meta { font-family: var(--font-data); font-size: 11px; color: var(--color-muted); margin-left: auto; flex-shrink: 0; padding-left: var(--space-2); }
+    .cert-empty-hint { font-size: 13px; color: var(--color-muted); padding: var(--space-3); text-align: center; }
+    .cert-diff { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-3) 0 var(--space-1); min-height: 22px; }
+    .cert-diff-chip {
+      font-size: 12px; padding: 1px var(--space-2); border-radius: 9999px;
+      border: 1px solid currentColor; white-space: nowrap;
+    }
+    .cert-diff-chip.add { color: var(--color-accent); }
+    .cert-diff-chip.remove { color: var(--color-danger); border-style: dashed; }
+
     /* ===== Toast / Loading / 空狀態 ===== */
     .toast {
       position: fixed; top: var(--space-3); left: 50%; transform: translateX(-50%) translateY(-200%);
@@ -563,6 +610,7 @@
     body.role-viewer .action-bar,
     body.role-viewer #mode-switch,
     body.role-viewer #btn-cycle-settings,
+    body.role-viewer #certified-stations-btn,
     body.role-viewer [data-import],
     body.role-viewer .hist-del,
     body.role-viewer #history-backfill,
@@ -576,6 +624,7 @@
       <div class="app-title">稽核駐站分配</div>
       <div class="app-cycle" id="cycle-tag">—</div>
       <span class="role-tag" id="role-tag">👁 唯讀檢視</span>
+      <button class="cycle-settings" id="certified-stations-btn">★ 認證駐站管理</button>
       <button class="cycle-settings hidden" id="btn-cycle-settings">⚙ 週期設定</button>
       <div class="mode-switch" id="mode-switch">
         <button data-mode="FIXED">固定三年區段</button>
@@ -746,6 +795,28 @@
       <div class="modal-footer">
         <button class="btn btn-cancel" id="backfill-cancel">取消</button>
         <button class="btn btn-confirm" id="backfill-save">登錄完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 認證駐站管理 Modal -->
+  <div class="modal-overlay" id="certified-overlay">
+    <div class="modal modal-wide">
+      <div class="modal-header">認證駐站管理</div>
+      <div class="modal-body">
+        <p>維護認證駐站名單（須剛好 <strong id="cert-expected">6</strong> 家）。從下方搜尋並點選駐站加入或替換，調整後按「更新」寫入。</p>
+        <div class="cert-stat" id="cert-stat"></div>
+        <div class="cert-section-label">目前選定</div>
+        <div class="cert-grid" id="certified-selected-list"></div>
+        <div class="cert-section-label">可選駐站</div>
+        <input type="text" class="cert-search" id="certified-search-input" placeholder="搜尋駐站名稱、代碼或管理員……" autocomplete="off">
+        <div class="cert-option-list" id="certified-option-list"></div>
+        <div class="cert-diff" id="certified-diff"></div>
+        <div class="form-error" id="certified-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="certified-cancel">關閉</button>
+        <button class="btn btn-confirm" id="certified-submit-btn" disabled>更新</button>
       </div>
     </div>
   </div>
@@ -2089,6 +2160,158 @@
       return { start: start, end: start + LENGTH - 1 };
     }
 
+    // =============================================
+    // 認證駐站管理（維護精確 N 家的認證名單）
+    // =============================================
+    const certState = { expectedCount: 6, options: [], originalCodes: new Set(), draftCodes: new Set() };
+
+    document.getElementById('certified-stations-btn').addEventListener('click', openCertifiedStationsModal);
+    document.getElementById('certified-cancel').addEventListener('click', closeCertifiedModal);
+    document.getElementById('certified-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeCertifiedModal();
+    });
+    document.getElementById('certified-search-input').addEventListener('input', renderCertifiedModal_);
+    document.getElementById('certified-submit-btn').addEventListener('click', submitCertifiedStations);
+
+    function openCertifiedStationsModal() {
+      const overlay = document.getElementById('certified-overlay');
+      document.getElementById('certified-error').textContent = '';
+      document.getElementById('certified-search-input').value = '';
+      document.getElementById('certified-option-list').innerHTML = '<div class="cert-empty-hint">載入中……</div>';
+      document.getElementById('certified-selected-list').innerHTML = '';
+      document.getElementById('cert-stat').textContent = '';
+      document.getElementById('certified-diff').innerHTML = '';
+      overlay.classList.add('open');
+
+      callServer('getCertifiedStationData')
+        .then(function (data) {
+          certState.expectedCount = data.expectedCount;
+          certState.options = data.stationOptions;
+          certState.originalCodes = new Set(data.currentCertified.map(s => s.code));
+          certState.draftCodes = new Set(certState.originalCodes);
+          document.getElementById('cert-expected').textContent = data.expectedCount;
+          if (!data.externalTableReady) {
+            document.getElementById('certified-error').textContent =
+              '注意：尚未設定認證駐站紀錄表（ISO_STATION_SPREADSHEET_ID），更新將無法寫入。';
+          }
+          renderCertifiedModal_();
+        })
+        .catch(function (err) {
+          document.getElementById('certified-option-list').innerHTML =
+            '<div class="cert-empty-hint">載入失敗：' + escapeHtml(err.message) + '</div>';
+        });
+    }
+
+    function closeCertifiedModal() {
+      document.getElementById('certified-overlay').classList.remove('open');
+    }
+
+    /** 依草稿名單重繪：統計、選定格、選項清單、異動摘要、更新鈕狀態 */
+    function renderCertifiedModal_() {
+      const expected = certState.expectedCount;
+      const draft = certState.draftCodes;
+      const byCode = {};
+      certState.options.forEach(s => { byCode[s.code] = s; });
+
+      // 統計列
+      const remain = expected - draft.size;
+      const statEl = document.getElementById('cert-stat');
+      let statTail;
+      if (draft.size > expected) statTail = '<span class="need">已超過 ' + (draft.size - expected) + ' 家，請移除</span>';
+      else if (remain > 0) statTail = '<span class="need">還差 ' + remain + ' 家</span>';
+      else statTail = '<span class="full">已選滿</span>';
+      statEl.innerHTML = '已選 <strong>' + draft.size + '/' + expected + '</strong> 家　·　' + statTail;
+
+      // 選定格（固定 expected 格，依序填入草稿成員，其餘空格）
+      const selectedCodes = Array.from(draft);
+      const slots = [];
+      for (let i = 0; i < expected; i++) {
+        const s = selectedCodes[i] ? byCode[selectedCodes[i]] : null;
+        if (s) {
+          const certTag = s.certCount > 0 ? '<span class="hist-tag cert-in">認證 ' + s.certCount + ' 次</span>' : '';
+          slots.push(
+            '<div class="cert-slot">' +
+              '<div class="info">' +
+                '<div class="s-name">' + escapeHtml(s.name) + certTag + '</div>' +
+                '<div class="s-meta">' + escapeHtml(s.code) + '</div>' +
+                '<div class="s-manager">負責人：' + escapeHtml(s.managerName || '未設定') + '</div>' +
+              '</div>' +
+              '<button class="btn-sm btn-remove" data-cert-remove="' + escapeHtml(s.code) + '">移除</button>' +
+            '</div>'
+          );
+        } else {
+          slots.push('<div class="cert-slot empty">尚未選定</div>');
+        }
+      }
+      document.getElementById('certified-selected-list').innerHTML = slots.join('');
+
+      // 選項清單（依搜尋過濾）
+      const q = document.getElementById('certified-search-input').value.trim().toLowerCase();
+      const matched = certState.options.filter(function (s) {
+        if (!q) return true;
+        return (s.name + ' ' + s.code + ' ' + (s.managerName || '')).toLowerCase().indexOf(q) !== -1;
+      });
+      const listEl = document.getElementById('certified-option-list');
+      if (matched.length === 0) {
+        listEl.innerHTML = '<div class="cert-empty-hint">查無符合「' + escapeHtml(q) + '」的駐站</div>';
+      } else {
+        listEl.innerHTML = matched.map(function (s) {
+          const on = draft.has(s.code);
+          const certTag = s.certCount > 0 ? ' <span class="hist-tag cert-in">認證 ' + s.certCount + ' 次</span>' : '';
+          return '<div class="cert-option' + (on ? ' selected' : '') + '" data-cert-toggle="' + escapeHtml(s.code) + '">' +
+            '<span class="check">' + (on ? '✓' : '') + '</span>' +
+            '<span class="o-name">' + escapeHtml(s.name) + certTag +
+              '<span class="s-manager">　' + escapeHtml(s.managerName || '未設定') + '</span></span>' +
+            '<span class="o-meta">' + escapeHtml(s.code) + '</span>' +
+          '</div>';
+        }).join('');
+      }
+
+      // 異動摘要
+      const added = Array.from(draft).filter(c => !certState.originalCodes.has(c));
+      const removed = Array.from(certState.originalCodes).filter(c => !draft.has(c));
+      const chips = added.map(c => '<span class="cert-diff-chip add">＋ ' + escapeHtml((byCode[c] || {}).name || c) + '</span>')
+        .concat(removed.map(c => '<span class="cert-diff-chip remove">－ ' + escapeHtml((byCode[c] || {}).name || c) + '</span>'));
+      document.getElementById('certified-diff').innerHTML = chips.join('') || '<span class="s-manager">尚無異動</span>';
+
+      // 更新鈕：剛好 expected 家且有異動才啟用
+      const hasDiff = added.length > 0 || removed.length > 0;
+      document.getElementById('certified-submit-btn').disabled = !(draft.size === expected && hasDiff);
+    }
+
+    // 點擊事件委派：切換選項 / 移除選定
+    document.getElementById('certified-option-list').addEventListener('click', function (e) {
+      const el = e.target.closest('[data-cert-toggle]');
+      if (el) toggleCertifiedDraft_(el.dataset.certToggle);
+    });
+    document.getElementById('certified-selected-list').addEventListener('click', function (e) {
+      const el = e.target.closest('[data-cert-remove]');
+      if (el) { certState.draftCodes.delete(el.dataset.certRemove); renderCertifiedModal_(); }
+    });
+
+    function toggleCertifiedDraft_(code) {
+      const errEl = document.getElementById('certified-error');
+      errEl.textContent = '';
+      if (certState.draftCodes.has(code)) {
+        certState.draftCodes.delete(code);
+      } else {
+        if (certState.draftCodes.size >= certState.expectedCount) {
+          errEl.textContent = '已選滿 ' + certState.expectedCount + ' 家，請先移除一家再加入。';
+          return;
+        }
+        certState.draftCodes.add(code);
+      }
+      renderCertifiedModal_();
+    }
+
+    function submitCertifiedStations() {
+      const codes = Array.from(certState.draftCodes);
+      if (codes.length !== certState.expectedCount) return; // 鈕已限制，雙保險
+      closeCertifiedModal();
+      // 名單變動會讓多站在認證／一般區重新分類，故全量重載最穩（沿用 v9 進度條）
+      runWriteReload(PROGRESS_MESSAGES.global, callServer('saveCertifiedStations', codes));
+    }
+
     function confirmCancelAssignment(stationCode) {
       const station = allStations().find(s => s.code === stationCode);
       openModal({
@@ -2252,6 +2475,16 @@
         { code: 'GRP-CO-B04', name: '台南駐站',     managerName: '謝組長', isCertified: false, members: [{ name: '周七', title: '駐站人員' }] },
         { code: 'GRP-CO-B05', name: '高雄駐站',     managerName: '洪組長', isCertified: false, members: [{ name: '葉八', title: '駐站人員' }] },
       ];
+      // 認證名單以 state.certifiedCodes 為可變真相（供「認證駐站管理」預覽改名單後重新分類）
+      if (!state.certifiedCodes) state.certifiedCodes = stations.filter(s => s.isCertified).map(s => s.code);
+      const certSet_ = new Set(state.certifiedCodes);
+      stations.forEach(function (st) {
+        const on = certSet_.has(st.code);
+        const since = on ? (st.certifiedSince || 2026) : 0;
+        st.isCertified = on;
+        st.certifiedSince = since;
+        st.certifiedTenures = on ? [{ since: since, until: null }] : [];
+      });
       const auditors = [
         { name: '稽核·趙', email: 'audit.chao@example.com' },
         { name: '稽核·錢', email: 'audit.chien@example.com' },
@@ -2281,12 +2514,39 @@
       })();
       const WRITE_FNS = ['saveStationAssignment', 'cancelAssignment', 'recordAudits', 'deleteAuditRecord',
         'planCenterAudit', 'cancelCenterPlan', 'recordCenterAudit', 'deleteCenterAuditRecord',
-        'addTriggerEvent', 'deleteTriggerEvent', 'setCycleMode', 'setCycleStartYear', 'importAuditRecords'];
+        'addTriggerEvent', 'deleteTriggerEvent', 'setCycleMode', 'setCycleStartYear', 'importAuditRecords',
+        'saveCertifiedStations'];
       if (fnName === 'getAuditDashboard' && previewRole === 'FORBIDDEN') {
         return Promise.reject(new Error('權限不足：駐站人員無法存取稽核駐站分配系統'));
       }
+      // 認證駐站管理（讀＋寫）皆限稽核員
+      if (fnName === 'getCertifiedStationData' && previewRole !== 'AUDITOR') {
+        return Promise.reject(new Error('權限不足：僅稽核員可執行此操作'));
+      }
       if (WRITE_FNS.indexOf(fnName) >= 0 && previewRole !== 'AUDITOR') {
         return Promise.reject(new Error('權限不足：僅稽核員可執行此操作'));
+      }
+
+      if (fnName === 'getCertifiedStationData') {
+        const opts = stations.map(function (st) {
+          const auditYears = state.records.filter(r => r.stationCode === st.code).map(r => r.year);
+          return {
+            code: st.code, name: st.name, managerName: st.managerName || '',
+            isCertified: !!st.isCertified, certifiedSince: st.certifiedSince || 0,
+            certCount: countValidCertifications_(st.certifiedTenures || [], auditYears),
+          };
+        });
+        return delayed_({
+          expectedCount: 6, externalTableReady: true,
+          currentCertified: opts.filter(s => s.isCertified),
+          stationOptions: opts,
+        }, 400);
+      }
+      if (fnName === 'saveCertifiedStations') {
+        const codes = (args[0] || []).map(c => String(c).trim()).filter(Boolean);
+        if (codes.length !== 6) return Promise.reject(new Error('認證駐站須剛好 6 家，目前選了 ' + codes.length + ' 家'));
+        state.certifiedCodes = codes;
+        return delayed_({ message: '【預覽模式】已更新認證駐站名單' }, 600);
       }
 
       if (fnName === 'setCycleMode') {

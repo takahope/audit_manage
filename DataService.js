@@ -187,6 +187,103 @@ function getCertifiedTenures() {
 }
 
 /**
+ * 提交認證名單異動（認證駐站管理）——單一 ScriptLock 內跨表原子寫入。
+ *
+ * 1. 認證駐站紀錄（外部 CERT_RECORDS 表，認證身分真相來源）：
+ *    - 移除站：補上其開放任期（換掉時間為空）的換掉時間＋換站操作人。
+ *    - 新增站：append 一筆新任期（指定時間=今天、換掉時間空）。
+ * 2. HR 組織架構樹 I 欄：新增站設 'V'、移除站清空（diff 式，只動異動的列）。
+ * 3. 失效 STATIONS / CERT_TENURES 快取，使後續 getAuditDashboard 立即反映新名單。
+ *
+ * 先寫真相來源（CERT_RECORDS）再同步 HR 主檔：HR 寫入需部署者對 HR 試算表有編輯權，
+ * 若失敗會拋錯（CERT 已提交、系統自身視圖正確，僅 HR 主檔未同步，由回傳訊息附註）。
+ *
+ * @param {string[]} addedCodes - 本次新增為認證的駐站代碼
+ * @param {string[]} removedCodes - 本次移除認證的駐站代碼
+ * @param {{email: string, name: string}} actor - 操作人（指定／換站紀錄人）
+ */
+function commitCertifiedRoster_(addedCodes, removedCodes, actor) {
+  const certSs = getCertSpreadsheet_();
+  if (!certSs) {
+    throw new Error('尚未設定認證駐站紀錄表（env.js 的 ENV.ISO_STATION_SPREADSHEET_ID），無法更新認證名單');
+  }
+  const certSheet = certSs.getSheetByName(SHEET_NAMES.CERT_RECORDS);
+  if (!certSheet) {
+    throw new Error('找不到工作表「' + SHEET_NAMES.CERT_RECORDS + '」，請確認認證駐站紀錄表結構');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy/MM/dd');
+    const batchId = 'BATCH-' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMddHHmmss');
+    const nameByCode = {};
+    getStations().forEach(s => { nameByCode[s.code] = s.name; });
+
+    // ---- 1a. 移除：補上開放任期的換掉時間與操作人 ----
+    if (removedCodes.length > 0) {
+      const removeSet = {};
+      removedCodes.forEach(c => { removeSet[String(c).trim()] = true; });
+      const rows = certSheet.getDataRange().getDisplayValues();
+      for (let i = 1; i < rows.length; i++) {
+        const code = String(rows[i][COL.CERT_RECORD.STATION_CODE] || '').trim();
+        const removed = String(rows[i][COL.CERT_RECORD.REMOVED_DATE] || '').trim();
+        if (removeSet[code] && removed === '') {
+          certSheet.getRange(i + 1, COL.CERT_RECORD.REMOVED_DATE + 1).setValue(today);
+          certSheet.getRange(i + 1, COL.CERT_RECORD.REMOVER_EMAIL + 1).setValue(actor.email);
+          certSheet.getRange(i + 1, COL.CERT_RECORD.REMOVER_NAME + 1).setValue(actor.name);
+        }
+      }
+    }
+
+    // ---- 1b. 新增：append 新任期列（欄位順序＝認證駐站紀錄 A～J）----
+    if (addedCodes.length > 0) {
+      const newRows = addedCodes.map(function (code) {
+        const recordId = 'CERT-' + Date.now() + '-' + Math.floor(Math.random() * 100000);
+        return [
+          recordId,                 // RECORD_ID
+          code,                     // STATION_CODE
+          nameByCode[code] || '',   // STATION_NAME
+          today,                    // ASSIGNED_DATE
+          '',                       // REMOVED_DATE（空＝仍在認證）
+          actor.email,              // ASSIGNER_EMAIL
+          actor.name,               // ASSIGNER_NAME
+          '',                       // REMOVER_EMAIL
+          '',                       // REMOVER_NAME
+          batchId,                  // BATCH_ID
+        ];
+      });
+      certSheet.getRange(certSheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
+    }
+
+    SpreadsheetApp.flush();
+
+    // ---- 2. 同步 HR 組織架構樹 I 欄（diff 式：新增設 V、移除清空）----
+    const orgSheet = getHrSpreadsheet_().getSheetByName(SHEET_NAMES.ORG);
+    if (orgSheet) {
+      const flagByCode = {};
+      addedCodes.forEach(c => { flagByCode[String(c).trim()] = ENV.CERTIFIED_MARK; });
+      removedCodes.forEach(c => { flagByCode[String(c).trim()] = ''; });
+      const orgRows = orgSheet.getDataRange().getDisplayValues();
+      for (let i = 1; i < orgRows.length; i++) {
+        const code = String(orgRows[i][COL.ORG.CODE] || '').trim();
+        if (Object.prototype.hasOwnProperty.call(flagByCode, code)) {
+          orgSheet.getRange(i + 1, COL.ORG.ISO_FLAG + 1).setValue(flagByCode[code]);
+        }
+      }
+      SpreadsheetApp.flush();
+    }
+
+    // ---- 3. 失效快取，使重載立即反映新名單 ----
+    const cache = CacheService.getScriptCache();
+    cache.remove(CACHE_KEYS.STATIONS);
+    cache.remove(CACHE_KEYS.CERT_TENURES);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * 取得駐站成員對照表：{ 駐站代碼: [{name, email, title}] }。
  * @returns {Object}
  */

@@ -259,7 +259,28 @@ function buildAuditHistory(auditYears, currentYear) {
   };
 }
 
+/**
+ * 計算單一駐站有效的「認證次數」（規格 4.3）。
+ *
+ * 一段認證任期（since～until 區間，until 為 null/未定義視為至今）內，
+ * 必須至少有一筆稽核紀錄的年度落在區間內，才算一次「有效認證」。
+ * 與本系統認證有效性的核心精神一致——認證需有稽核佐證，空有任期不計次。
+ *
+ * @param {Array<{since: number, until: (number|null)}>} tenures - 認證任期清單
+ * @param {number[]} auditYears - 該站所有稽核年份（不需排序）
+ * @returns {number} 有效認證次數
+ */
+function countValidCertifications_(tenures, auditYears) {
+  if (!Array.isArray(tenures) || tenures.length === 0) return 0;
+  const years = Array.isArray(auditYears) ? auditYears : [];
+  return tenures.filter(function (t) {
+    const since = Number(t.since) || 0;
+    const until = (t.until === null || t.until === undefined) ? Infinity : Number(t.until);
+    return years.some(function (y) { return y >= since && y <= until; });
+  }).length;
+}
+
 // 供 node 本機測試使用；GAS 環境無 module 物件，此區塊不會執行
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getCycleForYear, evaluateStation, evaluateStationFor_, buildCycleSummary, buildAuditHistory, STATION_STATUS };
+  module.exports = { getCycleForYear, evaluateStation, evaluateStationFor_, buildCycleSummary, buildAuditHistory, countValidCertifications_, STATION_STATUS };
 }

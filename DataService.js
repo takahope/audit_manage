@@ -243,6 +243,35 @@ function isAuditor_(assignmentRow) {
   return orgCode === ENV.AUDIT_TEAM.ORG_CODE && title === ENV.AUDIT_TEAM.MEMBER_TITLE;
 }
 
+/**
+ * 判定使用者角色（權限控管的真相來源，見 USER_ROLES）。
+ *
+ * - AUDITOR：在稽核人員名單中（TF-ISPI-GRP-AUDIT 且職稱稽核員），擁有全部權限。
+ * - FORBIDDEN：GRP-CO-* 駐站人員（人員職務配置中歸屬某駐站），不可存取——避免受稽者自評。
+ * - VIEWER：其他人（含無法辨識身分者），僅能檢視。
+ *
+ * 同時具稽核員與駐站身分時以 AUDITOR 優先（仍是合法稽核人員）。
+ * 複用 getAuditors／getStationMembersMap 的快取，多次呼叫成本低。
+ *
+ * @param {string} email
+ * @returns {string} USER_ROLES 之一
+ */
+function getUserRole_(email) {
+  const target = String(email || '').trim().toLowerCase();
+  if (!target) return USER_ROLES.VIEWER; // 無法辨識身分一律唯讀（fail-closed）
+
+  // getAuditors 的 email 已轉小寫，可直接比對
+  if (getAuditors().some(a => a.email === target)) return USER_ROLES.AUDITOR;
+
+  const membersMap = getStationMembersMap();
+  const isStationStaff = Object.keys(membersMap).some(code =>
+    membersMap[code].some(m => String(m.email || '').trim().toLowerCase() === target)
+  );
+  if (isStationStaff) return USER_ROLES.FORBIDDEN;
+
+  return USER_ROLES.VIEWER;
+}
+
 // =============================================
 // 稽核分派：讀取與寫入
 // =============================================

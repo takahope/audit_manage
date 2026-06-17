@@ -103,6 +103,14 @@ const CACHE_KEYS = {
 const CYCLE_MODES = { FIXED: 'FIXED', ROLLING: 'ROLLING' };
 const CYCLE_MODE_PROPERTY_KEY = 'CYCLE_MODE';
 
+/**
+ * 使用者角色（權限控管，由 DataService.getUserRole_ 依人員職務配置判定）：
+ * - AUDITOR：TF-ISPI-GRP-AUDIT 組且職稱稽核員，擁有全部讀寫權限。
+ * - FORBIDDEN：GRP-CO-* 駐站人員，不可存取本系統（避免受稽者自評）。
+ * - VIEWER：其他人，僅能檢視、不能操作。
+ */
+const USER_ROLES = { AUDITOR: 'AUDITOR', FORBIDDEN: 'FORBIDDEN', VIEWER: 'VIEWER' };
+
 /** 固定模式錨定起始年的 Script Properties key（未設定時退回 ENV.CYCLE_START_YEAR） */
 const CYCLE_START_YEAR_PROPERTY_KEY = 'CYCLE_START_YEAR';
 

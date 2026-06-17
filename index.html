@@ -549,6 +549,24 @@
       .progress-fill, .action-bar, .toast, .progress-fill-lg { transition: none; }
       .loading-seal { animation-duration: 2s; }
     }
+
+    /* ===== 唯讀檢視模式（VIEWER）：隱藏所有寫入操作入口 ===== */
+    .role-tag { display: none; }
+    body.role-viewer .role-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--color-pending-soft); color: var(--color-pending);
+      border: 1px solid var(--color-pending); border-radius: 4px;
+      padding: 2px var(--space-2); font-size: 12px; white-space: nowrap;
+    }
+    body.role-viewer .card-actions,
+    body.role-viewer .station-card input[type="checkbox"],
+    body.role-viewer .action-bar,
+    body.role-viewer #mode-switch,
+    body.role-viewer #btn-cycle-settings,
+    body.role-viewer [data-import],
+    body.role-viewer .hist-del,
+    body.role-viewer #history-backfill,
+    body.role-viewer .t-del { display: none !important; }
   </style>
 </head>
 <body>
@@ -557,6 +575,7 @@
     <div class="container">
       <div class="app-title">稽核駐站分配</div>
       <div class="app-cycle" id="cycle-tag">—</div>
+      <span class="role-tag" id="role-tag">👁 唯讀檢視</span>
       <button class="cycle-settings hidden" id="btn-cycle-settings">⚙ 週期設定</button>
       <div class="mode-switch" id="mode-switch">
         <button data-mode="FIXED">固定三年區段</button>
@@ -1009,6 +1028,8 @@
     }
 
     function renderAll() {
+      // 唯讀檢視：以 body class 統一隱藏寫入入口；CSS 控制故部分更新重建卡片後仍生效
+      document.body.classList.toggle('role-viewer', dashboard.userRole === 'VIEWER');
       const isRolling = dashboard.mode === 'ROLLING';
       document.getElementById('cycle-tag').textContent = isRolling
         ? '滾動式三年　·　' + dashboard.currentYear + ' 年度'
@@ -2253,6 +2274,21 @@
         return { message: message, centerType: d.centerTypes.find(function (t) { return t.id === typeId; }) || null, centerSummary: d.centerSummary };
       }
 
+      // 預覽用角色模擬：?role=viewer 或 ?role=forbidden 可驗證權限控管（預設 auditor）
+      const previewRole = (function () {
+        const r = (new URLSearchParams(location.search).get('role') || 'auditor').toUpperCase();
+        return ['AUDITOR', 'VIEWER', 'FORBIDDEN'].indexOf(r) >= 0 ? r : 'AUDITOR';
+      })();
+      const WRITE_FNS = ['saveStationAssignment', 'cancelAssignment', 'recordAudits', 'deleteAuditRecord',
+        'planCenterAudit', 'cancelCenterPlan', 'recordCenterAudit', 'deleteCenterAuditRecord',
+        'addTriggerEvent', 'deleteTriggerEvent', 'setCycleMode', 'setCycleStartYear', 'importAuditRecords'];
+      if (fnName === 'getAuditDashboard' && previewRole === 'FORBIDDEN') {
+        return Promise.reject(new Error('權限不足：駐站人員無法存取稽核駐站分配系統'));
+      }
+      if (WRITE_FNS.indexOf(fnName) >= 0 && previewRole !== 'AUDITOR') {
+        return Promise.reject(new Error('權限不足：僅稽核員可執行此操作'));
+      }
+
       if (fnName === 'setCycleMode') {
         state.mode = args[0];
         return Promise.resolve({ mode: state.mode, message: '【預覽模式】已切換週期模式' });
@@ -2477,6 +2513,7 @@
         centerSummary: buildCenterSummary(centerTypes),
         triggerCategories: TRIGGER_CATEGORIES,
         userEmail: 'preview@local',
+        userRole: previewRole,
       };
       }
     }

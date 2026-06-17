@@ -10,9 +10,48 @@
 // =============================================
 
 function doGet() {
+  // 駐站人員（受稽者）不得進入系統；身分判定異常時 fail-open 載入頁面，
+  // 真正的防護仍由 getAuditDashboard 與各寫入 API 把關（縱深防禦）。
+  let role = USER_ROLES.VIEWER;
+  try {
+    role = getUserRole_(Session.getActiveUser().getEmail() || '');
+  } catch (error) {
+    role = USER_ROLES.VIEWER;
+  }
+  if (role === USER_ROLES.FORBIDDEN) return forbiddenPage_();
+
   return HtmlService.createHtmlOutputFromFile('index')
     .setTitle('稽核駐站分配')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** 權限不足頁面：駐站人員開啟系統時顯示，不載入任何資料。 */
+function forbiddenPage_() {
+  const html =
+    '<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1"><title>權限不足</title>' +
+    '<style>body{margin:0;font-family:"Noto Sans TC",-apple-system,sans-serif;background:#f6f4ee;color:#1c1c1c;' +
+    'display:flex;min-height:100vh;align-items:center;justify-content:center}' +
+    '.box{background:#fffdf9;border:1px solid #d9d4c8;border-top:3px solid #a13c2f;padding:48px 40px;max-width:440px;' +
+    'text-align:center;box-shadow:0 18px 48px rgba(31,58,46,.12)}' +
+    '.box h1{font-family:"Noto Serif TC",serif;font-size:22px;margin:0 0 12px;color:#1f3a2e}' +
+    '.box p{font-size:14px;line-height:1.7;color:#6f6b62;margin:8px 0}</style></head><body>' +
+    '<div class="box"><h1>權限不足</h1>' +
+    '<p>稽核駐站分配系統僅供稽核人員使用。</p>' +
+    '<p>駐站人員無法存取本系統，如有疑問請聯絡稽核小組。</p></div></body></html>';
+  return HtmlService.createHtmlOutput(html).setTitle('權限不足');
+}
+
+/**
+ * 寫入操作的權限閘：非稽核員一律擋下。
+ * 即使前端已隱藏按鈕，仍須於 API 層攔截直接呼叫，防止繞過前端限制。
+ * @throws {Error} 角色非 AUDITOR 時拋錯（由各 API 的 try/catch 轉成 errorResponse_）
+ */
+function requireAuditor_() {
+  const email = Session.getActiveUser().getEmail() || '';
+  if (getUserRole_(email) !== USER_ROLES.AUDITOR) {
+    throw new Error('權限不足：僅稽核員可執行此操作');
+  }
 }
 
 // =============================================
@@ -29,6 +68,12 @@ function doGet() {
  */
 function getAuditDashboard() {
   try {
+    const userEmail = Session.getActiveUser().getEmail() || '';
+    const userRole = getUserRole_(userEmail);
+    if (userRole === USER_ROLES.FORBIDDEN) {
+      return errorResponse_('權限不足：駐站人員無法存取稽核駐站分配系統');
+    }
+
     const core = buildStationDashboardCore_();
     const byName = function (a, b) {
       return String(a.name || a.code).localeCompare(String(b.name || b.code), 'zh-Hant');
@@ -51,7 +96,8 @@ function getAuditDashboard() {
       centerTypes: center.types,
       centerSummary: center.summary,
       triggerCategories: TRIGGER_CATEGORIES,
-      userEmail: Session.getActiveUser().getEmail() || '',
+      userEmail: userEmail,
+      userRole: userRole,
     });
   } catch (error) {
     return errorResponse_(error.message);
@@ -270,6 +316,7 @@ function getCycleStartYear_() {
  */
 function setCycleStartYear(year) {
   try {
+    requireAuditor_();
     const anchorYear = Number(year);
     const currentYear = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy'));
     if (isNaN(anchorYear) || anchorYear !== Math.floor(anchorYear) || anchorYear < 2020 || anchorYear > currentYear + 1) {
@@ -294,6 +341,7 @@ function setCycleStartYear(year) {
  */
 function setCycleMode(mode) {
   try {
+    requireAuditor_();
     if (!CYCLE_MODES[mode]) {
       return errorResponse_('未知的週期模式：' + mode + '，僅支援固定區段（FIXED）與滾動式（ROLLING）');
     }
@@ -327,6 +375,7 @@ function setCycleMode(mode) {
  */
 function saveStationAssignment(stationCode, year, auditorEmails, plannedDate) {
   try {
+    requireAuditor_();
     const auditYear = Number(year);
     if (!isValidAuditYear_(auditYear)) {
       return errorResponse_('稽核年度 ' + year + ' 超出可登錄範圍，請確認年度後重試');
@@ -404,6 +453,7 @@ function saveStationAssignment(stationCode, year, auditorEmails, plannedDate) {
  */
 function cancelAssignment(stationCode, year) {
   try {
+    requireAuditor_();
     // 先取得行事曆事件 ID（刪列後就查不到了），同步刪除事件
     const plan = getAssignments().find(p => p.stationCode === stationCode && p.year === Number(year));
     const warning = plan && plan.calendarEventId ? syncCalendarDelete_(plan.calendarEventId) : '';
@@ -444,6 +494,7 @@ function findCenterTypeDef_(typeId) {
  */
 function planCenterAudit(typeId, auditorEmails, plannedDate, reason) {
   try {
+    requireAuditor_();
     const typeDef = findCenterTypeDef_(typeId);
     if (!typeDef) return errorResponse_('未知的稽核項目：' + typeId + '，請重新整理後再試');
 
@@ -513,6 +564,7 @@ function planCenterAudit(typeId, auditorEmails, plannedDate, reason) {
  */
 function cancelCenterPlan(typeId) {
   try {
+    requireAuditor_();
     const typeDef = findCenterTypeDef_(typeId);
     if (!typeDef) return errorResponse_('未知的稽核項目：' + typeId);
 
@@ -545,6 +597,7 @@ function cancelCenterPlan(typeId) {
  */
 function recordCenterAudit(typeId, auditDate, auditorEmails, reason, note) {
   try {
+    requireAuditor_();
     const typeDef = findCenterTypeDef_(typeId);
     if (!typeDef) return errorResponse_('未知的稽核項目：' + typeId + '，請重新整理後再試');
     if (!isValidPlannedDate_(auditDate)) {
@@ -589,6 +642,7 @@ function recordCenterAudit(typeId, auditDate, auditorEmails, reason, note) {
  */
 function deleteCenterAuditRecord(typeId, auditDate) {
   try {
+    requireAuditor_();
     const typeDef = findCenterTypeDef_(typeId);
     if (!typeDef) return errorResponse_('未知的稽核項目：' + typeId);
     if (!removeCenterRecord(typeId, auditDate)) {
@@ -615,6 +669,7 @@ function deleteCenterAuditRecord(typeId, auditDate) {
  */
 function addTriggerEvent(eventDate, category, description) {
   try {
+    requireAuditor_();
     if (!isValidPlannedDate_(eventDate)) {
       return errorResponse_('事件日期格式錯誤，請使用 yyyy/MM/dd');
     }
@@ -643,6 +698,7 @@ function addTriggerEvent(eventDate, category, description) {
  */
 function deleteTriggerEvent(eventId) {
   try {
+    requireAuditor_();
     if (!removeTriggerEvent(eventId)) {
       return errorResponse_('找不到此觸發事由，可能已被刪除');
     }
@@ -741,6 +797,7 @@ function calendarSyncSuffix_(warnings) {
  */
 function recordAudits(stationCodes, year, auditDateText) {
   try {
+    requireAuditor_();
     if (!Array.isArray(stationCodes) || stationCodes.length === 0) {
       return errorResponse_('未選擇任何駐站，請先勾選要登錄的駐站');
     }
@@ -822,6 +879,7 @@ function recordAudits(stationCodes, year, auditDateText) {
  */
 function deleteAuditRecord(stationCode, year) {
   try {
+    requireAuditor_();
     const removed = removeAuditRecord(stationCode, Number(year));
     if (!removed) {
       return errorResponse_('找不到 ' + stationCode + ' 於 ' + year + ' 年的稽核紀錄，可能已被刪除');
@@ -898,6 +956,7 @@ function exportAuditRecords(scope, format) {
  */
 function importAuditRecords(scope, csvText) {
   try {
+    requireAuditor_();
     const view = getExportView_(scope);
     const parsed = rowsToRecords(parseCsv(csvText), view.columns);
     if (parsed.missingHeaders.length > 0) {

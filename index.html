@@ -614,15 +614,7 @@
       gap: var(--space-3); z-index: 300;
     }
     .loading-overlay.hidden { display: none; }
-    .loading-seal {
-      width: 48px; height: 48px;
-      border: 3px solid var(--color-primary-soft);
-      border-top-color: var(--color-accent);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-text { font-size: 14px; color: var(--color-muted); }
 
     /* ===== 處理中進度條（置中卡片遮罩，蓋住彈窗與整頁） ===== */
     .progress-overlay {
@@ -680,7 +672,6 @@
 
     @media (prefers-reduced-motion: reduce) {
       .progress-fill, .action-bar, .toast, .progress-fill-lg { transition: none; }
-      .loading-seal { animation-duration: 2s; }
     }
 
     /* ===== 唯讀檢視模式（VIEWER）：隱藏所有寫入操作入口 ===== */
@@ -929,10 +920,8 @@
 
   <div class="toast" id="toast"></div>
 
-  <div class="loading-overlay" id="loading">
-    <div class="loading-seal"></div>
-    <div class="loading-text">正在讀取駐站與稽核紀錄……</div>
-  </div>
+  <!-- 初次載入：白底遮罩當背景，進度卡片（#progress-overlay）疊在其上呈現進度條 -->
+  <div class="loading-overlay" id="loading"></div>
 
   <!-- 處理中進度條：所有寫入後端的操作送出時顯示 -->
   <div class="progress-overlay" id="progress-overlay">
@@ -1048,6 +1037,8 @@
     // 規格：5 秒跑到 90%、每秒輪播文字、伺服器回應後補到 100%；最短顯示 1.8 秒。
     // =============================================
     const PROGRESS_MESSAGES = {
+      // 初次進入頁面的輪播文字（每秒一句，共 6 句配合 6 秒爬升動畫）
+      initial: ['正在連線稽核資料來源…', '正在讀取駐站清單…', '正在整理稽核紀錄…', '正在計算週期覆蓋率…', '正在套用認證駐站狀態…', '正在準備儀表板…'],
       assign:  ['正在確認稽核人員…', '正在寫入稽核排程…', '正在同步 Google 行事曆…', '正在更新覆蓋率…', '即將完成…'],
       record:  ['正在核對稽核日期…', '正在登錄稽核紀錄…', '正在重新計算週期狀態…', '正在更新覆蓋率…', '即將完成…'],
       center:  ['正在確認稽核項目…', '正在寫入排程…', '正在同步 Google 行事曆…', '正在更新期別狀態…', '即將完成…'],
@@ -1055,22 +1046,31 @@
       trigger: ['正在登記觸發事由…', '正在更新組織與人員待辦…', '即將完成…'],
       global:  ['正在套用設定…', '正在重新評估所有駐站…', '正在重算覆蓋率…', '即將完成…'],
     };
-    const PROGRESS_MIN_MS = 1800; // 最短顯示時間，確保使用者看清輪播文字
+    const PROGRESS_MIN_MS = 1800; // 寫入操作的最短顯示時間，確保使用者看清輪播文字
+    const PROGRESS_RAMP_MS = 5000; // 寫入操作爬升到 90% 的動畫時間（初次載入會覆寫為 6 秒）
     const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const progressState = { startTime: 0, rotateTimer: null, settleTimer: null, active: false };
+    const progressState = { startTime: 0, minMs: PROGRESS_MIN_MS, rotateTimer: null, settleTimer: null, active: false };
 
-    function showProgress(messages) {
+    /**
+     * 顯示進度條並啟動爬升動畫。
+     * @param {string[]} messages 每秒輪播的文字組
+     * @param {{rampMs?:number, minMs?:number}} [opts] 覆寫爬升時間與最短顯示時間
+     *        （初次載入用 6 秒／6 秒；省略則沿用寫入操作的 5 秒／1.8 秒）
+     */
+    function showProgress(messages, opts) {
       const overlay = document.getElementById('progress-overlay');
       const fill = document.getElementById('progress-fill');
       const text = document.getElementById('progress-text');
       const percent = document.getElementById('progress-percent');
       const seal = document.getElementById('progress-seal');
       const list = messages && messages.length ? messages : PROGRESS_MESSAGES.global;
+      const rampMs = (opts && opts.rampMs) || PROGRESS_RAMP_MS;
 
       clearTimeout(progressState.settleTimer);
       clearInterval(progressState.rotateTimer);
       seal.className = 'progress-seal';
       progressState.startTime = Date.now();
+      progressState.minMs = (opts && opts.minMs) || PROGRESS_MIN_MS; // 收尾時據此補足最短顯示
       progressState.active = true;
 
       // 重置到 0%（關閉 transition 避免上次的殘影回拉動畫）
@@ -1080,18 +1080,18 @@
       text.textContent = list[0];
       overlay.classList.add('show');
 
-      // 下一幀啟動「5 秒爬到 90%」；reduced-motion 直接定位不做補間
+      // 下一幀啟動「rampMs 內爬到 90%」；reduced-motion 直接定位不做補間
       requestAnimationFrame(function () {
         if (prefersReducedMotion) {
           fill.style.transition = 'none';
           fill.style.width = '90%';
         } else {
-          fill.style.transition = 'width 5s cubic-bezier(.16,.84,.44,1)';
+          fill.style.transition = 'width ' + (rampMs / 1000) + 's cubic-bezier(.16,.84,.44,1)';
           fill.style.width = '90%';
         }
       });
       // 進度數字獨立補間（與寬度動畫脫鉤，確保百分比讀數平滑上升到 90）
-      animatePercentTo_(90, 5000);
+      animatePercentTo_(90, rampMs);
 
       // 每秒輪播文字；跑完一輪停在最後一句（「即將完成…」）
       let idx = 0;
@@ -1132,7 +1132,7 @@
       return new Promise(function (resolve) {
         if (!progressState.active) { resolve(); return; }
         const elapsed = Date.now() - progressState.startTime;
-        const wait = Math.max(0, PROGRESS_MIN_MS - elapsed);
+        const wait = Math.max(0, progressState.minMs - elapsed);
         progressState.settleTimer = setTimeout(function () {
           clearInterval(progressState.rotateTimer);
           clearInterval(animatePercentTo_._timer);
@@ -1197,10 +1197,21 @@
     // 載入與渲染
     // =============================================
     function loadDashboard() {
-      document.getElementById('loading').classList.remove('hidden');
+      // 初次載入改用進度條：白底遮罩當背景，進度卡片 6 秒爬到 90%、每秒換一句文字，
+      // 後端回應後補到 100%（最短顯示 6 秒，營造資料處理感）。背景非同步抓資料並重繪。
+      const loading = document.getElementById('loading');
+      loading.classList.remove('hidden');
+      showProgress(PROGRESS_MESSAGES.initial, { rampMs: 6000, minMs: 6000 });
       fetchAndRender_()
-        .catch(function (err) { renderError(err.message); })
-        .finally(function () { document.getElementById('loading').classList.add('hidden'); });
+        .then(function () {
+          return finishProgress().then(function () { loading.classList.add('hidden'); });
+        })
+        .catch(function (err) {
+          return failProgress().then(function () {
+            loading.classList.add('hidden'); // 失敗也要拆掉遮罩，避免卡住
+            renderError(err.message);
+          });
+        });
     }
 
     /** 抓取並重繪整份儀表板（不管理 loading 遮罩，供 loadDashboard 與全域寫入共用） */

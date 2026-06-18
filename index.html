@@ -259,6 +259,92 @@
     .section-header.certified { border-bottom-color: var(--color-accent); }
     .section-hint { font-size: 13px; color: var(--color-muted); margin-left: auto; }
 
+    /* ===== 駐站篩選工具列 ===== */
+    .station-filter-panel {
+      margin-top: var(--space-3);
+      border: 1px solid var(--color-border);
+      border-left: 3px solid var(--color-primary);
+      background: var(--color-card);
+      padding: var(--space-3);
+      display: grid;
+      grid-template-columns: minmax(260px, 1.5fr) minmax(180px, .75fr) minmax(180px, .75fr) auto;
+      gap: var(--space-3);
+      align-items: end;
+    }
+    .filter-field label {
+      display: block;
+      margin-bottom: var(--space-1);
+      color: var(--color-muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .filter-control {
+      width: 100%;
+      height: 38px;
+      border: 1px solid var(--color-border);
+      border-radius: 2px;
+      background: #fff;
+      color: var(--color-text);
+      font-family: var(--font-body);
+      font-size: 14px;
+      padding: var(--space-1) var(--space-2);
+    }
+    .filter-control:focus {
+      outline: 2px solid var(--color-primary-soft);
+      border-color: var(--color-primary);
+    }
+    .filter-search-wrap { position: relative; }
+    .filter-search-wrap .filter-control {
+      padding-left: 34px;
+      font-family: var(--font-body);
+    }
+    .filter-search-wrap::before {
+      content: '⌕';
+      position: absolute;
+      left: var(--space-2);
+      bottom: 6px;
+      color: var(--color-muted);
+      font-family: var(--font-data);
+      font-size: 18px;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .filter-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      min-width: 150px;
+    }
+    .filter-count {
+      color: var(--color-muted);
+      font-family: var(--font-data);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .btn-filter-clear {
+      border: 1px solid var(--color-border);
+      color: var(--color-muted);
+      background: none;
+    }
+    .btn-filter-clear:not(:disabled) {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+    .btn-filter-clear:disabled {
+      opacity: .5;
+      cursor: default;
+    }
+    @media (max-width: 900px) {
+      .station-filter-panel { grid-template-columns: 1fr 1fr; }
+      .filter-field.search { grid-column: 1 / -1; }
+      .filter-actions { justify-content: flex-start; }
+    }
+    @media (max-width: 560px) {
+      .station-filter-panel { grid-template-columns: 1fr; }
+    }
+
     /* ===== 駐站卡片 ===== */
     .station-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-3); }
 
@@ -643,6 +729,26 @@
   <main class="container">
     <div id="view-station">
       <div id="summary-root"></div>
+      <div class="station-filter-panel" id="station-filter-panel">
+        <div class="filter-field search">
+          <label for="station-search-input">關鍵字搜尋</label>
+          <div class="filter-search-wrap">
+            <input class="filter-control" type="search" id="station-search-input" autocomplete="off" placeholder="搜尋駐站名稱、代碼、駐站管理員、稽核狀態、分派資訊、成員…">
+          </div>
+        </div>
+        <div class="filter-field">
+          <label for="station-manager-filter">駐站管理員</label>
+          <select class="filter-control" id="station-manager-filter"></select>
+        </div>
+        <div class="filter-field">
+          <label for="station-auditor-filter">被分派稽核員</label>
+          <select class="filter-control" id="station-auditor-filter"></select>
+        </div>
+        <div class="filter-actions">
+          <span class="filter-count" id="station-filter-count"></span>
+          <button class="btn-sm btn-filter-clear" id="station-filter-clear" type="button">清除篩選</button>
+        </div>
+      </div>
       <div class="data-tools">
         <span class="data-tools-label">駐站稽核紀錄</span>
         <button class="btn-sm btn-tool" data-export="station" data-format="csv">匯出 CSV</button>
@@ -860,11 +966,18 @@
     let currentTab = 'station';      // 'station' | 'center'
     const selectedCodes = new Set(); // 勾選中的駐站代碼（登錄稽核用）
     const expandedCodes = new Set(); // 成員名單展開中的駐站（重繪後保留）
+    const filterState = {
+      query: '',
+      managerKey: '',
+      auditorKey: '',
+    };
 
     const MODE_LABELS = {
       FIXED:   { cycleDone: '本週期已完成', progressTitle: '週期覆蓋進度' },
       ROLLING: { cycleDone: '效期內',       progressTitle: '三年效期覆蓋' },
     };
+    const FILTER_UNSET_MANAGER = '__UNSET_MANAGER__';
+    const FILTER_UNASSIGNED_AUDITOR = '__UNASSIGNED_AUDITOR__';
 
     // =============================================
     // 後端通訊（本機開發時自動退回假資料）
@@ -908,6 +1021,26 @@
       toast.className = 'toast show' + (isError ? ' error' : '');
       clearTimeout(showToast._timer);
       showToast._timer = setTimeout(function () { toast.className = 'toast'; }, 3600);
+    }
+
+    function debounce_(fn, ms) {
+      let timer = null;
+      return function () {
+        const args = arguments;
+        clearTimeout(timer);
+        timer = setTimeout(function () { fn.apply(null, args); }, ms);
+      };
+    }
+
+    function normalizeSearchText_(value) {
+      return String(value == null ? '' : value).trim().toLowerCase();
+    }
+
+    function splitList_(value) {
+      return String(value || '')
+        .split(/[、,，]/)
+        .map(function (item) { return item.trim(); })
+        .filter(Boolean);
     }
 
     // =============================================
@@ -1098,6 +1231,178 @@
       return !station.evaluation.auditedThisYear;
     }
 
+    function hasStationFilters_() {
+      return Boolean(filterState.query || filterState.managerKey || filterState.auditorKey);
+    }
+
+    function stationManagerKey_(station) {
+      const name = String(station.managerName || '').trim();
+      return name || FILTER_UNSET_MANAGER;
+    }
+
+    function stationManagerLabel_(key) {
+      return key === FILTER_UNSET_MANAGER ? '未設定' : key;
+    }
+
+    function stationAuditorKeys_(station) {
+      const assignment = station.assignment;
+      if (!assignment) return [];
+
+      const emails = splitList_(assignment.auditorEmails).map(function (email) {
+        return normalizeSearchText_(email);
+      });
+      if (emails.length > 0) return emails;
+
+      return splitList_(assignment.auditorNames).map(function (name) {
+        return 'name:' + name;
+      });
+    }
+
+    function stationAuditorOptionMap_() {
+      const options = {};
+      const auditorNameByEmail = {};
+      (dashboard.auditors || []).forEach(function (auditor) {
+        const email = normalizeSearchText_(auditor.email);
+        if (email) auditorNameByEmail[email] = auditor.name || auditor.email;
+      });
+
+      allStations().forEach(function (station) {
+        const assignment = station.assignment;
+        if (!assignment) return;
+        const emails = splitList_(assignment.auditorEmails).map(normalizeSearchText_);
+        const names = splitList_(assignment.auditorNames);
+
+        if (emails.length > 0) {
+          emails.forEach(function (email, index) {
+            if (!email) return;
+            options[email] = options[email] || auditorNameByEmail[email] || names[index] || email;
+          });
+          return;
+        }
+
+        names.forEach(function (name) {
+          options['name:' + name] = name;
+        });
+      });
+      return options;
+    }
+
+    function statusLabelForSearch_(station) {
+      return statusBadge_(station).label;
+    }
+
+    function stationSearchIndex_(station) {
+      const assignment = station.assignment || {};
+      const memberText = (station.members || []).map(function (member) {
+        return [member.name, member.email, member.title].join(' ');
+      }).join(' ');
+      const recordText = (station.auditRecords || []).map(function (record) {
+        return [record.year, record.auditDate].join(' ');
+      }).join(' ');
+      const certifiedText = station.isCertified
+        ? 'ISO 認證 認證駐站 認證自 ' + (station.certifiedSince || '')
+        : '一般駐站';
+
+      return normalizeSearchText_([
+        station.code,
+        station.name,
+        station.alias,
+        '駐站管理員',
+        station.managerName,
+        station.managerEmail,
+        certifiedText,
+        statusLabelForSearch_(station),
+        station.lastAuditDisplay,
+        recordText,
+        assignment.auditorNames,
+        assignment.auditorEmails,
+        assignment.plannedDate,
+        memberText,
+      ].join(' '));
+    }
+
+    function stationMatchesFilters_(station) {
+      if (filterState.managerKey && stationManagerKey_(station) !== filterState.managerKey) return false;
+
+      if (filterState.auditorKey) {
+        const keys = stationAuditorKeys_(station);
+        if (filterState.auditorKey === FILTER_UNASSIGNED_AUDITOR) {
+          if (keys.length > 0) return false;
+        } else if (keys.indexOf(filterState.auditorKey) === -1) {
+          return false;
+        }
+      }
+
+      if (filterState.query && stationSearchIndex_(station).indexOf(filterState.query) === -1) return false;
+      return true;
+    }
+
+    function filteredStations_() {
+      return allStations().filter(stationMatchesFilters_);
+    }
+
+    function filteredStationGroups_() {
+      const certified = dashboard.certifiedStations.filter(stationMatchesFilters_);
+      const normal = dashboard.normalStations.filter(stationMatchesFilters_);
+      return { certified: certified, normal: normal, total: certified.length + normal.length };
+    }
+
+    function renderStationFilterControls() {
+      const managerSelect = document.getElementById('station-manager-filter');
+      const auditorSelect = document.getElementById('station-auditor-filter');
+      const searchInput = document.getElementById('station-search-input');
+
+      searchInput.value = filterState.query;
+
+      const managerKeys = Array.from(new Set(allStations().map(stationManagerKey_)))
+        .sort(function (a, b) { return stationManagerLabel_(a).localeCompare(stationManagerLabel_(b), 'zh-Hant'); });
+      managerSelect.innerHTML =
+        '<option value="">全部管理員</option>' +
+        managerKeys.map(function (key) {
+          return '<option value="' + escapeHtml(key) + '">' + escapeHtml(stationManagerLabel_(key)) + '</option>';
+        }).join('');
+      managerSelect.value = managerKeys.indexOf(filterState.managerKey) === -1 ? '' : filterState.managerKey;
+      filterState.managerKey = managerSelect.value;
+
+      const auditorOptions = stationAuditorOptionMap_();
+      const auditorKeys = Object.keys(auditorOptions)
+        .sort(function (a, b) { return String(auditorOptions[a]).localeCompare(String(auditorOptions[b]), 'zh-Hant'); });
+      auditorSelect.innerHTML =
+        '<option value="">全部稽核員</option>' +
+        '<option value="' + FILTER_UNASSIGNED_AUDITOR + '">未分派</option>' +
+        auditorKeys.map(function (key) {
+          return '<option value="' + escapeHtml(key) + '">' + escapeHtml(auditorOptions[key]) + '</option>';
+        }).join('');
+      auditorSelect.value = (filterState.auditorKey === FILTER_UNASSIGNED_AUDITOR || auditorKeys.indexOf(filterState.auditorKey) !== -1)
+        ? filterState.auditorKey
+        : '';
+      filterState.auditorKey = auditorSelect.value;
+
+      updateStationFilterMeta_();
+    }
+
+    function updateStationFilterMeta_() {
+      const countEl = document.getElementById('station-filter-count');
+      const clearBtn = document.getElementById('station-filter-clear');
+      const matched = filteredStations_().length;
+      const total = allStations().length;
+      countEl.textContent = matched + ' / ' + total + ' 間';
+      clearBtn.disabled = !hasStationFilters_();
+    }
+
+    function renderFilteredStationView_() {
+      renderSections();
+      updateStationFilterMeta_();
+    }
+
+    function clearStationFilters_() {
+      filterState.query = '';
+      filterState.managerKey = '';
+      filterState.auditorKey = '';
+      renderStationFilterControls();
+      renderSections();
+    }
+
     function renderAll() {
       // 唯讀檢視：以 body class 統一隱藏寫入入口；CSS 控制故部分更新重建卡片後仍生效
       document.body.classList.toggle('role-viewer', dashboard.userRole === 'VIEWER');
@@ -1111,6 +1416,7 @@
       // 起始年設定只對固定模式有意義，滾動模式時隱藏
       document.getElementById('btn-cycle-settings').classList.toggle('hidden', isRolling);
       renderSummary();
+      renderStationFilterControls();
       renderSections();
       renderCenter();
       renderYearOptions();
@@ -1129,6 +1435,23 @@
         updateActionBar(); // 駐站動作列只在駐站分頁顯示
       });
     });
+
+    const debouncedStationSearch_ = debounce_(function (value) {
+      filterState.query = normalizeSearchText_(value);
+      renderFilteredStationView_();
+    }, 180);
+    document.getElementById('station-search-input').addEventListener('input', function (e) {
+      debouncedStationSearch_(e.target.value);
+    });
+    document.getElementById('station-manager-filter').addEventListener('change', function (e) {
+      filterState.managerKey = e.target.value;
+      renderFilteredStationView_();
+    });
+    document.getElementById('station-auditor-filter').addEventListener('change', function (e) {
+      filterState.auditorKey = e.target.value;
+      renderFilteredStationView_();
+    });
+    document.getElementById('station-filter-clear').addEventListener('click', clearStationFilters_);
 
     function renderSummary() {
       const s = dashboard.summary;
@@ -1168,6 +1491,16 @@
           '且「組織架構樹」中有代碼為 GRP-CO- 開頭的節點。</div>';
         return;
       }
+      const groups = filteredStationGroups_();
+      if (groups.total === 0) {
+        root.innerHTML =
+          '<div class="empty-state">' +
+            '<div><strong>沒有符合條件的駐站</strong></div>' +
+            '<div>請調整關鍵字、駐站管理員或被分派稽核員篩選。</div>' +
+            '<button class="btn-sm btn-filter-clear" type="button" onclick="clearStationFilters_()">清除篩選</button>' +
+          '</div>';
+        return;
+      }
       const normalHint = dashboard.mode === 'ROLLING' ? '上次稽核後滿三年到期' : '三年週期內稽核一次';
       const cc = dashboard.certifiedCycle;
       const certifiedTitle = (dashboard.mode === 'ROLLING' || !cc)
@@ -1177,8 +1510,8 @@
         ? '上次稽核後滿兩年到期'
         : '兩年一輪，輪內每家稽核一次';
       root.innerHTML =
-        buildSection(certifiedTitle, 'certified', dashboard.certifiedStations, certifiedHint) +
-        buildSection('一般駐站', 'normal', dashboard.normalStations, normalHint);
+        buildSection(certifiedTitle, 'certified', groups.certified, certifiedHint) +
+        buildSection('一般駐站', 'normal', groups.normal, normalHint);
       bindCardEvents();
     }
 
@@ -1282,7 +1615,7 @@
               '<div class="station-name">' + escapeHtml(station.name) +
                 (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '') +
                 (station.isCertified && station.certifiedSince ? ' <span class="cert-since">認證自 ' + station.certifiedSince + '</span>' : '') + '</div>' +
-              '<div class="station-manager">負責人：' + escapeHtml(station.managerName || '未設定') + '</div>' +
+              '<div class="station-manager">駐站管理員：' + escapeHtml(station.managerName || '未設定') + '</div>' +
               historyLine +
             '</div>' +
             '<span class="badge ' + badge.cls + '">' + badge.label + '</span>' +
@@ -1368,21 +1701,11 @@
 
       pruneStaleSelections_();
       renderSummary();
-
-      let missing = false;
-      updated.forEach(function (st) {
-        const card = document.querySelector('.station-card[data-code="' + attrSelector_(st.code) + '"]');
-        if (!card) { missing = true; return; }
-        const temp = document.createElement('div');
-        temp.innerHTML = buildStationCard(st);
-        const newCard = temp.firstElementChild;
-        card.replaceWith(newCard);
-        bindStationCardEvents(newCard);
-      });
+      renderStationFilterControls();
+      renderSections();
 
       updateActionBar();
       refreshHistoryBody_();           // 歷年彈窗開著時同步刷新
-      if (missing) renderSections();    // 卡片不在 DOM（極少數）→ 整段重繪
     }
 
     /**

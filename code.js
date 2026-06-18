@@ -470,7 +470,7 @@ function setCycleMode(mode) {
  * 儲存單一駐站的稽核分派——人員與日期可獨立設定（至少一項），每次呼叫立即寫入。
  *
  * 行事曆策略（複用同一筆預約）：
- * - 有日期：建立或更新同一事件（無人員時標題附「待指派人員」）。
+ * - 有日期：建立或更新同一事件（標題附稽核員名稱，無人員時標示「未分派」）。
  * - 無日期但既有事件存在（使用者清掉日期）：刪除事件、清空 eventId。
  * - 無日期且無事件（僅人員）：先只寫入試算表，待日期確定再進日曆。
  *
@@ -510,11 +510,11 @@ function saveStationAssignment(stationCode, year, auditorEmails, plannedDate) {
     if (hasDate) {
       const sync = syncCalendarUpsert_(
         oldEventId,
-        '【稽核】' + station.name + (auditors.length === 0 ? '（待指派人員）' : ''),
+        '【稽核】' + station.name + ' - ' + (auditors.length === 0 ? '未分派' : auditors.map(a => a.name).join('、')),
         dateText,
         '駐站代碼：' + station.code + '\n稽核年度：' + auditYear +
-          '\n稽核人員：' + (auditors.length === 0 ? '（待指派）' : auditors.map(a => a.name).join('、')) +
-          '\n（由稽核駐站分配系統建立）',
+          '\n稽核人員：' + (auditors.length === 0 ? '未分派' : auditors.map(a => a.name).join('、')) +
+          '\n（稽核狀態管理自動建立）',
         auditors.map(a => a.email)
       );
       calendarEventId = sync.eventId;
@@ -625,11 +625,11 @@ function planCenterAudit(typeId, auditorEmails, plannedDate, reason) {
     if (hasDate) {
       const sync = syncCalendarUpsert_(
         oldEventId,
-        '【稽核】' + typeDef.name + (auditors.length === 0 ? '（待指派人員）' : ''),
+        '【稽核】' + typeDef.name + ' - ' + (auditors.length === 0 ? '未分派' : auditors.map(a => a.name).join('、')),
         dateText,
         '稽核項目：' + typeDef.name + '（' + typeDef.freqLabel + '）' +
-          '\n稽核人員：' + (auditors.length === 0 ? '（待指派）' : auditors.map(a => a.name).join('、')) +
-          (reason ? '\n事由：' + reason : '') + '\n（由稽核駐站分配系統建立）',
+          '\n稽核人員：' + (auditors.length === 0 ? '未分派' : auditors.map(a => a.name).join('、')) +
+          (reason ? '\n事由：' + reason : '') + '\n（稽核狀態管理自動建立）',
         auditors.map(a => a.email)
       );
       calendarEventId = sync.eventId;

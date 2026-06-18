@@ -237,6 +237,23 @@
     .stat-card.planned .num { color: var(--color-pending); }
     .stat-card.audited { border-top: 3px solid var(--color-primary); }
     .stat-card.audited .num { color: var(--color-primary); }
+    /* 可點擊的統計卡片：點開後列出對應駐站清單 */
+    .stat-card.clickable { cursor: pointer; transition: box-shadow .15s ease, transform .15s ease; }
+    .stat-card.clickable:hover { box-shadow: 0 4px 14px rgba(31, 58, 46, .14); transform: translateY(-1px); }
+    .stat-card.clickable:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+    .stat-card.clickable .label::after { content: ' ›'; color: var(--color-muted); }
+
+    /* 統計卡片清單彈窗：每列一站 */
+    .year-list { list-style: none; margin: var(--space-2) 0; padding: 0; }
+    .year-list li {
+      display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3);
+      padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); font-size: 14px;
+    }
+    .year-list li:last-child { border-bottom: none; }
+    .year-list .yl-name { font-weight: 500; }
+    .year-list .yl-name .mono { font-family: var(--font-data); font-size: 12px; color: var(--color-muted); margin-left: var(--space-2); }
+    .year-list .yl-meta { color: var(--color-muted); font-size: 13px; text-align: right; flex-shrink: 0; }
+    .year-list .yl-tag { color: var(--color-danger); }
 
     .suggestion-box {
       border-left: 3px solid var(--color-accent);
@@ -771,6 +788,17 @@
       <div class="modal-footer">
         <button class="btn btn-cancel" id="history-close">關閉</button>
         <button class="btn btn-confirm" id="history-backfill">補登紀錄</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 統計卡片清單彈窗：今年已預計稽核／今年已稽核 的駐站列表 -->
+  <div class="modal-overlay" id="year-list-overlay">
+    <div class="modal">
+      <div class="modal-header" id="year-list-title"></div>
+      <div class="modal-body" id="year-list-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="year-list-close">關閉</button>
       </div>
     </div>
   </div>
@@ -1484,14 +1512,63 @@
             '<div class="progress-numbers">' + scopeText + '</div>' +
           '</div>' +
           '<div class="stat-cards">' +
-            '<div class="stat-card planned"><span class="num">' + s.plannedThisYear + '</span><span class="label">今年已預計稽核</span></div>' +
-            '<div class="stat-card audited"><span class="num">' + s.auditedThisYear + '</span><span class="label">今年已稽核</span></div>' +
+            '<div class="stat-card planned clickable" data-stat="planned" role="button" tabindex="0" aria-label="今年已預計稽核，點擊查看駐站列表"><span class="num">' + s.plannedThisYear + '</span><span class="label">今年已預計稽核</span></div>' +
+            '<div class="stat-card audited clickable" data-stat="audited" role="button" tabindex="0" aria-label="今年已稽核，點擊查看駐站列表"><span class="num">' + s.auditedThisYear + '</span><span class="label">今年已稽核</span></div>' +
           '</div>' +
           '<div class="suggestion-box">' +
             '<div>今年建議稽核 <span class="num">' + s.suggestedTotal + '</span> 間</div>' +
             '<div class="detail">一般駐站 ' + s.suggestedNormal + ' 間 ＋ 認證駐站 ' + s.suggestedCertified + ' 間（兩年一輪）</div>' +
           '</div>' +
         '</div>';
+
+      // 卡片點擊（含鍵盤 Enter/Space）→ 開啟對應駐站清單
+      document.querySelectorAll('#summary-root .stat-card.clickable').forEach(function (card) {
+        const stat = card.dataset.stat;
+        card.addEventListener('click', function () { openYearListModal(stat); });
+        card.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openYearListModal(stat); }
+        });
+      });
+    }
+
+    /**
+     * 開啟統計卡片的駐站清單彈窗。
+     * @param {'planned'|'audited'} stat planned＝今年有分派；audited＝今年已稽核
+     *        （與 summary.plannedThisYear／auditedThisYear 用同一判定，確保數字與清單一致）
+     */
+    function openYearListModal(stat) {
+      const planned = stat === 'planned';
+      const list = allStations()
+        .filter(function (s) { return planned ? Boolean(s.assignment) : s.evaluation.auditedThisYear; })
+        .sort(function (a, b) { return String(a.name || a.code).localeCompare(String(b.name || b.code), 'zh-Hant'); });
+
+      const title = (planned ? '今年已預計稽核' : '今年已稽核') + '（' + list.length + ' 間）';
+      document.getElementById('year-list-title').textContent = title;
+
+      let body;
+      if (list.length === 0) {
+        body = '<p style="color:var(--color-muted);padding:var(--space-3) 0">'
+          + (planned ? '今年尚無已預計稽核的駐站。' : '今年尚無已完成稽核的駐站。') + '</p>';
+      } else {
+        body = '<ul class="year-list">' + list.map(function (s) {
+          const nameCell = '<span class="yl-name">' + escapeHtml(s.name || s.code)
+            + '<span class="mono">' + escapeHtml(s.code) + '</span></span>';
+          let meta;
+          if (planned) {
+            const auditors = (s.assignment && String(s.assignment.auditorNames || '').trim())
+              ? escapeHtml(s.assignment.auditorNames)
+              : '<span class="yl-tag">未分派</span>';
+            const date = (s.assignment && String(s.assignment.plannedDate || '').trim())
+              ? escapeHtml(s.assignment.plannedDate) : '日期待定';
+            meta = auditors + '　·　' + date;
+          } else {
+            meta = s.lastAuditDisplay ? ('最近稽核 ' + escapeHtml(s.lastAuditDisplay)) : '本年度已稽核';
+          }
+          return '<li>' + nameCell + '<span class="yl-meta">' + meta + '</span></li>';
+        }).join('') + '</ul>';
+      }
+      document.getElementById('year-list-body').innerHTML = body;
+      document.getElementById('year-list-overlay').classList.add('open');
     }
 
     function renderSections() {
@@ -2377,6 +2454,13 @@
     document.getElementById('history-close').addEventListener('click', closeHistoryModal);
     document.getElementById('history-overlay').addEventListener('click', function (e) {
       if (e.target === this) closeHistoryModal();
+    });
+
+    // 統計卡片清單彈窗：關閉鈕與點擊遮罩外關閉
+    function closeYearListModal() { document.getElementById('year-list-overlay').classList.remove('open'); }
+    document.getElementById('year-list-close').addEventListener('click', closeYearListModal);
+    document.getElementById('year-list-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeYearListModal();
     });
     document.getElementById('history-backfill').addEventListener('click', function () {
       if (!historyModalState) return;

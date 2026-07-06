@@ -790,8 +790,13 @@ function removeAuditRecord(stationCode, year) {
  * @returns {Array<{stationCode: string, stationName: string, recordedAt: string, recorder: string, note: string}>}
  */
 function getStatusNotes() {
-  const rows = getSheetRows_(getAuditSpreadsheet_(), SHEET_NAMES.STATION_STATUS_NOTE, COL.STATUS_NOTE.STATION_CODE);
-  return rows.map(function (row) {
+  const ss = getAuditSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEET_NAMES.STATION_STATUS_NOTE);
+  if (!sheet) {
+    return []; // 如果尚未部署該工作表，回傳空陣列避免壞掉儀表板
+  }
+  const rows = sheet.getDataRange().getDisplayValues();
+  return rows.slice(1).filter(row => String(row[COL.STATUS_NOTE.STATION_CODE] || '').trim() !== '').map(function (row) {
     return {
       stationCode: String(row[COL.STATUS_NOTE.STATION_CODE]).trim(),
       stationName: String(row[COL.STATUS_NOTE.STATION_NAME]).trim(),
@@ -808,16 +813,20 @@ function getStatusNotes() {
  * @param {string} stationCode
  * @param {string} stationName
  * @param {string} note
+ * @param {string} recorderEmail
  */
-function saveStatusNote(stationCode, stationName, note) {
+function saveStatusNote(stationCode, stationName, note, recorderEmail) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    const sheet = getOrCreateSheet_(SHEET_NAMES.STATION_STATUS_NOTE); // 此處無藍圖直接 getOrCreate，若尚未部署會產生空表頭的表，建議透過 deploy.js 部署
-    const user = getUserInfo();
+    const ss = getAuditSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEET_NAMES.STATION_STATUS_NOTE);
+    if (!sheet) {
+      throw new Error('找不到工作表「' + SHEET_NAMES.STATION_STATUS_NOTE + '」，請管理員先執行部署。');
+    }
     const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm:ss');
     const rows = sheet.getDataRange().getDisplayValues();
-    
+
     // 由下往上找，若有則直接修改該列
     for (let i = rows.length - 1; i >= 1; i--) {
       if (String(rows[i][COL.STATUS_NOTE.STATION_CODE]).trim() === String(stationCode).trim()) {
@@ -826,20 +835,20 @@ function saveStatusNote(stationCode, stationName, note) {
           stationCode,
           stationName,
           now,
-          user.name || user.email,
+          recorderEmail,
           note || ''
         ]]);
         SpreadsheetApp.flush();
         return;
       }
     }
-    
+
     // 找不到則新增
     sheet.appendRow([
       stationCode,
       stationName,
       now,
-      user.name || user.email,
+      recorderEmail,
       note || ''
     ]);
     SpreadsheetApp.flush();

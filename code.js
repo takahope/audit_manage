@@ -1022,7 +1022,8 @@ function deleteAuditRecord(stationCode, year) {
 function saveStationStatusNote(stationCode, stationName, note) {
   try {
     requireAuditor_(); // 需有稽核員權限
-    saveStatusNote(stationCode, stationName, note);
+    const recorderEmail = Session.getActiveUser().getEmail() || '';
+    saveStatusNote(stationCode, stationName, note, recorderEmail);
     const delta = stationDeltaFor_([stationCode]);
     return successResponse_({
       message: '已儲存駐站「' + stationName + '」的現況備註',

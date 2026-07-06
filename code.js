@@ -122,6 +122,7 @@ function buildStationDashboardCore_() {
   const stations = getStations();
   const membersMap = getStationMembersMap();
   const records = getAuditRecords();
+  const statusNotes = getStatusNotes();
 
   // 駐站代碼 → 該站所有稽核年份／完整紀錄
   const yearsByStation = {};
@@ -131,6 +132,12 @@ function buildStationDashboardCore_() {
     yearsByStation[r.stationCode].push(r.year);
     if (!recordsByStation[r.stationCode]) recordsByStation[r.stationCode] = [];
     recordsByStation[r.stationCode].push(r);
+  });
+
+  // 駐站代碼 → 現況備註
+  const noteByStation = {};
+  statusNotes.forEach(note => {
+    noteByStation[note.stationCode] = note;
   });
 
   // 駐站代碼 → 今年的稽核分派
@@ -143,6 +150,7 @@ function buildStationDashboardCore_() {
     const auditYears = yearsByStation[station.code] || [];
     const evaluation = evaluateStationFor_(station, auditYears, currentYear, cycle, certifiedCycle, mode);
     const assignment = assignmentByStation[station.code] || null;
+    const statusNote = noteByStation[station.code] || null;
 
     // 狀態優先序：今年已稽核 > 待稽核（已分派）> 候選/效期內
     if (assignment && evaluation.status !== STATION_STATUS.AUDITED_THIS_YEAR) {
@@ -170,6 +178,7 @@ function buildStationDashboardCore_() {
       },
       history: buildAuditHistory(auditYears, currentYear),
       evaluation: evaluation,
+      statusNote: statusNote,
     };
   });
 
@@ -994,6 +1003,29 @@ function deleteAuditRecord(stationCode, year) {
     const delta = stationDeltaFor_([stationCode]);
     return successResponse_({
       message: '已刪除 ' + stationCode + ' 的 ' + year + ' 年稽核紀錄',
+      stations: delta.stations,
+      summary: delta.summary,
+    });
+  } catch (error) {
+    return errorResponse_(error.message);
+  }
+}
+
+/**
+ * 儲存駐站現況備註並回傳更新後的卡片資料（部分更新）。
+ *
+ * @param {string} stationCode
+ * @param {string} stationName
+ * @param {string} note
+ * @returns {string} JSON 回應
+ */
+function saveStationStatusNote(stationCode, stationName, note) {
+  try {
+    requireAuditor_(); // 需有稽核員權限
+    saveStatusNote(stationCode, stationName, note);
+    const delta = stationDeltaFor_([stationCode]);
+    return successResponse_({
+      message: '已儲存駐站「' + stationName + '」的現況備註',
       stations: delta.stations,
       summary: delta.summary,
     });

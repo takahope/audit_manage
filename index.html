@@ -455,6 +455,8 @@
     .btn-edit-draft { border: 1px solid var(--color-accent); color: var(--color-accent); }
     .btn-remove { border: 1px solid var(--color-border); color: var(--color-muted); }
     .btn-backfill { border: 1px solid var(--color-border); color: var(--color-muted); }
+    .btn-status-note { border: 1px solid var(--color-border); color: #8e5e31; }
+    .status-note-icon { cursor: help; margin-left: 4px; font-size: 0.9em; }
 
     /* 週期設定（僅固定模式顯示） */
     .cycle-settings {
@@ -920,6 +922,25 @@
       <div class="modal-footer">
         <button class="btn btn-cancel" id="backfill-cancel">取消</button>
         <button class="btn btn-confirm" id="backfill-save">登錄完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 駐站現況備註 Modal -->
+  <div class="modal-overlay" id="status-note-overlay">
+    <div class="modal">
+      <div class="modal-header" id="status-note-title">駐站現況</div>
+      <div class="modal-body">
+        <p>在此輸入駐站目前的現況備註，儲存後會更新到卡片上。</p>
+        <div class="form-row">
+          <label for="status-note-text">備註內容</label>
+          <textarea id="status-note-text" rows="5" style="width: 100%; box-sizing: border-box; resize: vertical;"></textarea>
+        </div>
+        <div class="form-error" id="status-note-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="status-note-cancel">取消</button>
+        <button class="btn btn-confirm" id="status-note-save">儲存</button>
       </div>
     </div>
   </div>
@@ -1680,6 +1701,7 @@
         actionButtons.push('<button class="btn-sm btn-assign" data-action="assign" data-code="' + escapeHtml(station.code) + '">排定稽核</button>');
       }
       actionButtons.push('<button class="btn-sm btn-backfill" data-action="backfill" data-code="' + escapeHtml(station.code) + '">登錄完成／補登</button>');
+      actionButtons.push('<button class="btn-sm btn-status-note" data-action="status-note" data-code="' + escapeHtml(station.code) + '">駐站現況</button>');
       const assignmentHtml = assignmentInfoHtml + '<div class="card-actions">' + actionButtons.join('') + '</div>';
 
       const expanded = expandedCodes.has(station.code);
@@ -1701,6 +1723,7 @@
             '<div>' +
               '<div class="station-code">' + escapeHtml(station.code) + '</div>' +
               '<div class="station-name">' + escapeHtml(station.name) +
+                (station.statusNote && station.statusNote.note ? ' <span class="status-note-icon" title="現況備註：' + escapeHtml(station.statusNote.note) + '">❗</span>' : '') +
                 (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '') +
                 (station.isCertified && station.certifiedSince ? ' <span class="cert-since">認證自 ' + station.certifiedSince + '</span>' : '') + '</div>' +
               '<div class="station-manager">駐站管理員：' + escapeHtml(station.managerName || '未設定') + '</div>' +
@@ -1746,6 +1769,8 @@
           el.addEventListener('click', function () { openAssignModal(code); });
         } else if (action === 'backfill') {
           el.addEventListener('click', function () { openBackfillModal(code); });
+        } else if (action === 'status-note') {
+          el.addEventListener('click', function () { openStatusNoteModal(code); });
         } else if (action === 'cancel-assignment') {
           el.addEventListener('click', function () { confirmCancelAssignment(code); });
         }
@@ -2358,6 +2383,42 @@
       const call = callServer('recordAudits', [code], Number(dateText.slice(0, 4)), dateText);
       closeBackfillModal();
       runWrite(PROGRESS_MESSAGES.record, call, applyStationDelta);
+    });
+
+    // =============================================
+    // 駐站現況備註
+    // =============================================
+    let statusNoteCode = null;
+
+    function openStatusNoteModal(stationCode) {
+      const station = allStations().find(s => s.code === stationCode);
+      if (!station) return;
+      statusNoteCode = stationCode;
+
+      document.getElementById('status-note-title').textContent = '駐站現況 — ' + station.name;
+      document.getElementById('status-note-text').value = (station.statusNote && station.statusNote.note) ? station.statusNote.note : '';
+      document.getElementById('status-note-error').textContent = '';
+      document.getElementById('status-note-overlay').classList.add('open');
+    }
+
+    function closeStatusNoteModal() {
+      document.getElementById('status-note-overlay').classList.remove('open');
+      statusNoteCode = null;
+    }
+
+    document.getElementById('status-note-cancel').addEventListener('click', closeStatusNoteModal);
+    document.getElementById('status-note-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeStatusNoteModal();
+    });
+
+    document.getElementById('status-note-save').addEventListener('click', function () {
+      const errorEl = document.getElementById('status-note-error');
+      const noteText = document.getElementById('status-note-text').value.trim();
+      const station = allStations().find(s => s.code === statusNoteCode);
+      
+      const call = callServer('saveStationStatusNote', statusNoteCode, station.name, noteText);
+      closeStatusNoteModal();
+      runWrite('儲存現況中...', call, applyStationDelta);
     });
 
     // ---- 歷年稽核紀錄（點擊駐站卡片開啟） ----

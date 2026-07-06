@@ -91,6 +91,20 @@ const SHEET_BLUEPRINTS = [
     textColumns: [COL.TRIGGER.EVENT_ID, COL.TRIGGER.EVENT_DATE],
     integerColumns: [],
   },
+  {
+    name: SHEET_NAMES.STATION_STATUS_NOTE,
+    headers: ['駐站代碼', '駐站名稱', '紀錄修改時間', '紀錄人員', '現況備註'],
+    notes: [
+      'FK → 組織架構樹.代碼（GRP-CO- 開頭）',
+      '冗餘欄，提高人工檢視可讀性',
+      'yyyy/MM/dd HH:mm:ss',
+      '執行登錄操作者的 Email',
+      '備註文字內容',
+    ],
+    headerColor: '#8e5e31',
+    textColumns: [COL.STATUS_NOTE.STATION_CODE],
+    integerColumns: [],
+  },
 ];
 
 /**

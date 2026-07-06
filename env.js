@@ -87,6 +87,7 @@ const SHEET_NAMES = {
   CENTER_RECORDS: '中心稽核紀錄',
   CENTER_PLANS: '中心稽核排程',
   TRIGGER_EVENTS: '稽核觸發事件',
+  STATION_STATUS_NOTE: '駐站現況備註',
   // 外部認證駐站紀錄表（ISO_STATION_SPREADSHEET_ID 指向的試算表內）
   CERT_RECORDS: '認證駐站紀錄',
 };
@@ -190,6 +191,13 @@ const COL = {
     DESCRIPTION: 3,
     RECORDER: 4,
     RECORDED_AT: 5,
+  },
+  STATUS_NOTE: {
+    STATION_CODE: 0,
+    STATION_NAME: 1,
+    RECORDED_AT: 2,
+    RECORDER: 3,
+    NOTE: 4,
   },
   // 外部「認證駐站紀錄」表：以區間（指定～換掉）記錄每家認證任期，本系統只讀
   CERT_RECORD: {

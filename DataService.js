@@ -780,3 +780,70 @@ function removeAuditRecord(stationCode, year) {
     lock.releaseLock();
   }
 }
+
+// =============================================
+// 駐站現況備註 (Status Note)
+// =============================================
+
+/**
+ * 讀取所有駐站的現況備註。
+ * @returns {Array<{stationCode: string, stationName: string, recordedAt: string, recorder: string, note: string}>}
+ */
+function getStatusNotes() {
+  const rows = getSheetRows_(getAuditSpreadsheet_(), SHEET_NAMES.STATION_STATUS_NOTE, COL.STATUS_NOTE.STATION_CODE);
+  return rows.map(function (row) {
+    return {
+      stationCode: String(row[COL.STATUS_NOTE.STATION_CODE]).trim(),
+      stationName: String(row[COL.STATUS_NOTE.STATION_NAME]).trim(),
+      recordedAt: String(row[COL.STATUS_NOTE.RECORDED_AT]).trim(),
+      recorder: String(row[COL.STATUS_NOTE.RECORDER]).trim(),
+      note: String(row[COL.STATUS_NOTE.NOTE]).trim(),
+    };
+  });
+}
+
+/**
+ * 儲存駐站現況備註（若該站已有紀錄則更新，無則新增一列），確保每站只有一筆。
+ *
+ * @param {string} stationCode
+ * @param {string} stationName
+ * @param {string} note
+ */
+function saveStatusNote(stationCode, stationName, note) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getOrCreateSheet_(SHEET_NAMES.STATION_STATUS_NOTE); // 此處無藍圖直接 getOrCreate，若尚未部署會產生空表頭的表，建議透過 deploy.js 部署
+    const user = getUserInfo();
+    const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm:ss');
+    const rows = sheet.getDataRange().getDisplayValues();
+    
+    // 由下往上找，若有則直接修改該列
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if (String(rows[i][COL.STATUS_NOTE.STATION_CODE]).trim() === String(stationCode).trim()) {
+        const rowRange = sheet.getRange(i + 1, 1, 1, 5); // A ~ E
+        rowRange.setValues([[
+          stationCode,
+          stationName,
+          now,
+          user.name || user.email,
+          note || ''
+        ]]);
+        SpreadsheetApp.flush();
+        return;
+      }
+    }
+    
+    // 找不到則新增
+    sheet.appendRow([
+      stationCode,
+      stationName,
+      now,
+      user.name || user.email,
+      note || ''
+    ]);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+}

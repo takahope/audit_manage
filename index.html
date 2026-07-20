@@ -2953,6 +2953,7 @@
         { code: 'GRP-CO-B03', name: '嘉義駐站',     managerName: '楊組長', isCertified: false, members: [] },
         { code: 'GRP-CO-B04', name: '台南駐站',     managerName: '謝組長', isCertified: false, members: [{ name: '周七', title: '駐站人員' }] },
         { code: 'GRP-CO-B05', name: '高雄駐站',     managerName: '洪組長', isCertified: false, members: [{ name: '葉八', title: '駐站人員' }] },
+        { code: 'GRP-CO-EX-01', name: '測試委外駐站', managerName: '測試', isCertified: false, isOutsourced: true, members: [] },
       ];
       // 認證名單以 state.certifiedCodes 為可變真相（供「認證駐站管理」預覽改名單後重新分類）
       if (!state.certifiedCodes) state.certifiedCodes = stations.filter(s => s.isCertified).map(s => s.code);
@@ -3246,8 +3247,9 @@
 
       return {
         currentYear: currentYear, mode: state.mode, cycleStartYear: state.cycleStartYear, cycle: cycle, certifiedCycle: certifiedCycle, summary: summary, auditors: auditors,
-        certifiedStations: evaluated.filter(s => s.isCertified),
-        normalStations: evaluated.filter(s => !s.isCertified),
+        certifiedStations: evaluated.filter(s => s.isCertified && !s.isOutsourced),
+        normalStations: evaluated.filter(s => !s.isCertified && !s.isOutsourced),
+        outsourcedStations: evaluated.filter(s => s.isOutsourced),
         centerTypes: centerTypes,
         centerSummary: buildCenterSummary(centerTypes),
         triggerCategories: TRIGGER_CATEGORIES,

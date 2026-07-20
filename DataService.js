@@ -114,13 +114,15 @@ function isStationCode_(code) {
 }
 
 function rowToStation_(row) {
+  const code = String(row[COL.ORG.CODE]).trim();
   return {
-    code: String(row[COL.ORG.CODE]).trim(),
+    code: code,
     name: row[COL.ORG.NAME] || '',
     alias: row[COL.ORG.ALIAS] || '',
     managerEmail: row[COL.ORG.MANAGER_EMAIL] || '',
     managerName: row[COL.ORG.MANAGER_NAME] || '',
     isCertified: isCertifiedMark_(row[COL.ORG.ISO_FLAG]),
+    isOutsourced: code.toUpperCase().indexOf('GRP-CO-EX-') === 0,
     certifiedSince: 0, // 預設不過濾兩年輪；設定外部認證表時由 getStations 覆寫
   };
 }

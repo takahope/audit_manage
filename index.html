@@ -379,6 +379,7 @@
     .station-card.status-pending     { border-left-color: var(--color-pending); }
     .station-card.status-cycle-done  { border-left-color: var(--color-border); }
     .station-card.is-certified       { border-left-color: var(--color-accent); }
+    .station-card.is-outsourced      { border-left-color: var(--color-pending); }
     .station-card.is-selected        { outline: 2px solid var(--color-primary); outline-offset: -1px; }
 
     .card-top { display: flex; align-items: flex-start; gap: var(--space-2); }
@@ -407,6 +408,10 @@
     .badge-cycle-done { color: var(--color-muted); }
     .badge-certified  {
       color: var(--color-accent); border-radius: 9999px;
+      margin-left: var(--space-1);
+    }
+    .badge-outsourced {
+      color: var(--color-pending); border-radius: 9999px;
       margin-left: var(--space-1);
     }
     .cert-since {
@@ -1404,7 +1409,13 @@
     function filteredStationGroups_() {
       const certified = dashboard.certifiedStations.filter(stationMatchesFilters_);
       const normal = dashboard.normalStations.filter(stationMatchesFilters_);
-      return { certified: certified, normal: normal, total: certified.length + normal.length };
+      const outsourced = (dashboard.outsourcedStations || []).filter(stationMatchesFilters_);
+      return { 
+        certified: certified, 
+        normal: normal, 
+        outsourced: outsourced,
+        total: certified.length + normal.length + outsourced.length 
+      };
     }
 
     function renderStationFilterControls() {
@@ -1620,7 +1631,8 @@
         : '兩年一輪，輪內每家稽核一次';
       root.innerHTML =
         buildSection(certifiedTitle, 'certified', groups.certified, certifiedHint) +
-        buildSection('一般駐站', 'normal', groups.normal, normalHint);
+        buildSection('一般駐站', 'normal', groups.normal, normalHint) +
+        buildSection('委外駐站', 'outsourced', groups.outsourced, '每年不固定簽約，獨立案件不計入三年週期。');
       bindCardEvents();
     }
 
@@ -1651,10 +1663,12 @@
       const selectable = isSelectable(station);
       const cardClasses = ['station-card', badge.card];
       if (station.isCertified) cardClasses.push('is-certified');
+      if (station.isOutsourced) cardClasses.push('is-outsourced');
       if (selectedCodes.has(station.code)) cardClasses.push('is-selected');
 
       // 滾動模式：一般駐站顯示下次到期年
-      const dueText = (dashboard.mode === 'ROLLING' && !station.isCertified && ev.dueYear)
+      const dueText = station.isOutsourced ? '' :
+        (dashboard.mode === 'ROLLING' && !station.isCertified && ev.dueYear)
         ? '<span class="due-year">到期 ' + ev.dueYear + '</span>' : '';
 
       // 稽核履歷行：上次稽核年＋累計次數；逾期（從未稽核或滿三年）整行磚紅警示
@@ -1724,7 +1738,7 @@
               '<div class="station-code">' + escapeHtml(station.code) + '</div>' +
               '<div class="station-name">' + escapeHtml(station.name) +
                 (station.statusNote && station.statusNote.note ? ' <span class="status-note-icon" title="現況備註：' + escapeHtml(station.statusNote.note) + '">❗</span>' : '') +
-                (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '') +
+                (station.isOutsourced ? ' <span class="badge badge-outsourced">委外駐站</span>' : (station.isCertified ? ' <span class="badge badge-certified">ISO 認證</span>' : '')) +
                 (station.isCertified && station.certifiedSince ? ' <span class="cert-since">認證自 ' + station.certifiedSince + '</span>' : '') + '</div>' +
               '<div class="station-manager">駐站管理員：' + escapeHtml(station.managerName || '未設定') + '</div>' +
               historyLine +

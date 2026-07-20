@@ -116,6 +116,16 @@ function evaluateStation(station, auditYears, currentYear, cycle, mode, validity
  * @returns {Object} 單一 evaluation，含 countedInCycle（三年）與 scheduleCovered（排程輪）
  */
 function evaluateStationFor_(station, auditYears, currentYear, normalCycle, certifiedCycle, mode) {
+  if (station.isOutsourced) {
+    const auditedThisYear = auditYears.indexOf(currentYear) !== -1;
+    return {
+      status: auditedThisYear ? STATION_STATUS.AUDITED_THIS_YEAR : STATION_STATUS.NOT_AUDITED,
+      countedInCycle: false,
+      countedYear: null,
+      scheduleCovered: false,
+      lastAuditYear: auditYears.length > 0 ? Math.max.apply(null, auditYears) : null
+    };
+  }
   const triEval = evaluateStation(station, auditYears, currentYear, normalCycle, mode, 3);
   if (!station.isCertified) {
     triEval.scheduleCovered = triEval.countedInCycle;
@@ -150,6 +160,17 @@ function evaluateStationFor_(station, auditYears, currentYear, normalCycle, cert
  * @returns {Object} 結構與 evaluateStation 固定模式相同，另含 dueYear
  */
 function evaluateStationRolling_(station, auditYears, currentYear, validityYears) {
+  if (station.isOutsourced) {
+    const auditedThisYear = auditYears.indexOf(currentYear) !== -1;
+    return {
+      status: auditedThisYear ? STATION_STATUS.AUDITED_THIS_YEAR : STATION_STATUS.NOT_AUDITED,
+      countedInCycle: false,
+      countedYear: null,
+      scheduleCovered: false,
+      dueYear: null,
+      lastAuditYear: auditYears.length > 0 ? Math.max.apply(null, auditYears) : null
+    };
+  }
   const validity = validityYears || 3;
   const sorted = auditYears.slice().sort((a, b) => a - b);
   const auditedThisYear = auditYears.indexOf(currentYear) !== -1;
@@ -198,8 +219,8 @@ function evaluateStationRolling_(station, auditYears, currentYear, validityYears
  */
 function buildCycleSummary(evaluatedStations, currentYear, normalCycle, certifiedCycle, mode) {
   const isRolling = mode === 'ROLLING';
-  const certified = evaluatedStations.filter(s => s.isCertified);
-  const normal = evaluatedStations.filter(s => !s.isCertified);
+  const certified = evaluatedStations.filter(s => s.isCertified && !s.isOutsourced);
+  const normal = evaluatedStations.filter(s => !s.isCertified && !s.isOutsourced);
 
   // 覆蓋率：全站三年總覽口徑（認證去重，每家一次）
   const countedTotal = evaluatedStations.filter(s => s.evaluation.countedInCycle).length;

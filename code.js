@@ -166,6 +166,7 @@ function buildStationDashboardCore_() {
       managerName: station.managerName,
       managerEmail: station.managerEmail,
       isCertified: station.isCertified,
+      isOutsourced: !!station.isOutsourced,
       certifiedSince: station.certifiedSince || 0,
       certifiedTenures: station.certifiedTenures || [],
       members: membersMap[station.code] || [],

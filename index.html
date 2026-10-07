@@ -787,7 +787,7 @@
         <div class="filter-field dispatch-field" id="station-dispatch-control-group">
           <label for="station-dispatch-date">調派檢視日期</label>
           <div class="dispatch-date-row">
-            <input class="filter-control" type="date" id="station-dispatch-date">
+            <input class="filter-control" type="date" id="station-dispatch-date" min="2000-01-01" max="2100-12-31">
             <button class="btn-sm btn-tool" id="station-dispatch-refresh" type="button" title="重新整理調派資料">重新整理</button>
           </div>
           <span class="dispatch-fetched-at" id="station-dispatch-fetched-at"></span>
@@ -1651,13 +1651,19 @@
       const handleDateChange_ = function (e) {
         const val = e.target.value;
         if (val && /^\d{4}-\d{2}-\d{2}$/.test(val) && val !== selectedDispatchDate) {
-          onDispatchDateChange_(val);
+          const yr = Number(val.slice(0, 4));
+          if (yr >= 2000 && yr <= 2100) {
+            onDispatchDateChange_(val);
+          }
         }
       };
       dispatchDateInput.addEventListener('change', handleDateChange_);
       dispatchDateInput.addEventListener('input', handleDateChange_);
       dispatchDateInput.addEventListener('blur', function (e) {
-        if (!e.target.value) e.target.value = selectedDispatchDate;
+        const val = e.target.value;
+        if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val) || Number(val.slice(0, 4)) < 2000 || Number(val.slice(0, 4)) > 2100) {
+          e.target.value = selectedDispatchDate;
+        }
       });
     }
     const dispatchRefreshBtn = document.getElementById('station-dispatch-refresh');
@@ -1667,12 +1673,16 @@
         dispatchRefreshBtn.disabled = true;
         ensureDispatchSnapshot_(year, true)
           .then(function () {
-            renderSections();
-            updateDispatchMeta_();
+            if (Number(selectedDispatchDate.slice(0, 4)) === year) {
+              renderSections();
+              updateDispatchMeta_();
+            }
           })
           .catch(function () {
-            renderSections();
-            updateDispatchMeta_();
+            if (Number(selectedDispatchDate.slice(0, 4)) === year) {
+              renderSections();
+              updateDispatchMeta_();
+            }
           })
           .finally(function () {
             dispatchRefreshBtn.disabled = false;
@@ -3184,6 +3194,9 @@
       }
       if (fnName === 'getStationDispatchSnapshot') {
         const year = Number(args[0]);
+        if (!Number.isInteger(year) || !/^\d{4}$/.test(String(year)) || year < 2000 || year > 2100) {
+          return Promise.reject(new Error('調派查詢年度須為 2000–2100'));
+        }
         const state = year === 2028 ? 'partial' : year === 2029 ? 'unavailable' : 'ready';
         return delayed_({ year, state, loadedYears: state === 'ready' ? [year] : [],
           missingYears: state === 'partial' ? [year] : [],

@@ -623,7 +623,7 @@
       background: #fff; color: var(--color-text);
     }
     .form-error { font-size: 13px; color: var(--color-danger); min-height: 20px; }
-    .period-hint { font-size: 12px; color: var(--color-muted); margin-top: var(--space-1); min-height: 18px; }
+    .period-hint, #assign-dispatch-hint { font-size: 12px; color: var(--color-muted); margin-top: var(--space-1); min-height: 18px; }
     .period-hint .warn { color: var(--color-danger); }
 
     /* ===== 認證駐站管理 Modal ===== */
@@ -930,6 +930,7 @@
         <div class="form-row">
           <label for="assign-date">預計稽核日期（可留空）</label>
           <input type="date" id="assign-date">
+          <div id="assign-dispatch-hint" role="status" aria-live="polite"></div>
         </div>
         <div class="form-error" id="assign-error"></div>
       </div>
@@ -2595,13 +2596,45 @@
       // date input 需要 yyyy-MM-dd；後端與顯示用 yyyy/MM/dd，存取時轉換
       document.getElementById('assign-date').value = a && a.plannedDate ? a.plannedDate.replace(/\//g, '-') : '';
       document.getElementById('assign-error').textContent = '';
+      renderAssignDispatchHint_();
       document.getElementById('assign-overlay').classList.add('open');
     }
 
     function closeAssignModal() {
       document.getElementById('assign-overlay').classList.remove('open');
       assigningCode = null;
+      const hint = document.getElementById('assign-dispatch-hint');
+      if (hint) hint.textContent = '';
     }
+
+    function renderAssignDispatchHint_() {
+      const date = document.getElementById('assign-date').value;
+      const hint = document.getElementById('assign-dispatch-hint');
+      if (!hint) return;
+      if (!date || !assigningCode) { hint.textContent = ''; return; }
+      const view = getStationDispatchView_(assigningCode, date);
+      hint.textContent = assignDispatchMessage_(view);
+      if (view.state !== 'loading') return;
+      const code = assigningCode;
+      ensureDispatchSnapshot_(Number(date.slice(0, 4)), false)
+        .then(function () {
+          if (assigningCode === code && document.getElementById('assign-date').value === date) renderAssignDispatchHint_();
+        })
+        .catch(function () { if (assigningCode === code) hint.textContent = '調派資料暫不可用'; });
+    }
+
+    function assignDispatchMessage_(view) {
+      if (view.state !== 'ready') return dispatchPrimary_(view) + (view.state === 'partial' ? '；資料未完整，請核對來源' : '');
+      const pendingCount = view.pending.reduce(function (sum, record) { return sum + (Number(record.demandCount) || 0); }, 0);
+      if (pendingCount) return '該日有 ' + pendingCount + ' 名待指派需求，請核對人力安排。';
+      if (view.incoming.length) return '該日有跨站調入支援，請查看時段。';
+      if (view.outgoing.length) return '該日有本站人員調出，請查看時段。';
+      if (view.other.length) return '該日有已登錄排班，請查看詳情。';
+      return '該日無已登錄調派；此資訊不代表已確認出勤。';
+    }
+
+    document.getElementById('assign-date').addEventListener('input', renderAssignDispatchHint_);
+    document.getElementById('assign-date').addEventListener('change', renderAssignDispatchHint_);
 
     document.getElementById('assign-cancel').addEventListener('click', closeAssignModal);
     document.getElementById('assign-overlay').addEventListener('click', function (e) {
@@ -3308,7 +3341,16 @@
           { stationCode: 'GRP-CO-B04', year: 2022, auditDate: '' },  // 逾期示範：距 2026 已滿三年
           { stationCode: 'GRP-CO-A03', year: 2026, auditDate: '2026/05/10' }, // 升認證前(2027 生效)已稽 → 只進三年總覽、不進兩年輪
         ],
-        assignments: [],
+        assignments: [
+          {
+            stationCode: 'GRP-CO-A01',
+            year: 2026,
+            auditorNames: '稽核·趙',
+            auditorEmails: 'audit.chao@example.com',
+            plannedDate: '2026/10/07',
+            calendarEventId: 'mock-evt-1',
+          },
+        ],
         // 中心稽核預置情境：半年制 H1 已稽、每年制有排程／去年漏稽／已完成、事件一開一銷、不定期一筆
         centerRecords: [
           { typeId: 'WITHDRAW', auditDate: '2026/03/10', auditorNames: '稽核·趙', reason: '', note: '' },
@@ -3398,6 +3440,14 @@
         { id: 'mock-cross', stationCode: 'GRP-CO-A02', originalStationCode: 'GRP-CO-B01',
           startDate: '2026-12-30', endDate: '2027-01-03', nurseName: '李護理師', nurseEmail: 'lee@example.com',
           startTime: '', endTime: '', shiftName: '正常班', hours: 8, note: '', demandCount: 1,
+          isPending: false, isTemporary: true },
+        { id: 'mock-in-2027', stationCode: 'GRP-CO-A01', originalStationCode: 'GRP-CO-B01',
+          startDate: '2027-03-15', endDate: '2027-03-15', nurseName: '周護理師', nurseEmail: 'chou@example.com',
+          startTime: '09:00', endTime: '18:00', shiftName: '正常班', hours: 8, note: '跨站調入支援', demandCount: 1,
+          isPending: false, isTemporary: true },
+        { id: 'mock-in-2028', stationCode: 'GRP-CO-A01', originalStationCode: 'GRP-CO-B01',
+          startDate: '2028-05-20', endDate: '2028-05-20', nurseName: '鄭護理師', nurseEmail: 'cheng@example.com',
+          startTime: '09:00', endTime: '18:00', shiftName: '正常班', hours: 8, note: '支援', demandCount: 1,
           isPending: false, isTemporary: true }
       ];
       if (fnName === 'getAuditDashboard' && previewRole === 'FORBIDDEN') {
@@ -3415,7 +3465,7 @@
         return delayed_({ year, state, loadedYears: state === 'ready' ? [year] : [],
           missingYears: state === 'partial' ? [year] : [],
           fetchedAt: args[1] ? '2026-10-07 11:00:00' : '2026-10-07 10:30:00',
-          dispatches: state === 'ready' ? mockDispatches_.filter(function (r) {
+          dispatches: state !== 'unavailable' ? mockDispatches_.filter(function (r) {
             return r.startDate <= year + '-12-31' && r.endDate >= year + '-01-01';
           }) : [] }, 350);
       }

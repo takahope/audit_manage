@@ -55,28 +55,33 @@ GAS Web App：完整稽核管理平台——駐站收案三年週期＋七類中
 1. 開啟 [script.new](https://script.new) 建立新 Apps Script 專案，命名「稽核駐站分配」。
    - 建議改從一個新的 Google Sheet 進入「擴充功能 → Apps Script」建立**綁定專案**，稽核紀錄就存在該試算表，`AUDIT_SPREADSHEET_ID` 可留空。
 2. 依檔名逐一建立檔案並貼上內容（`index.html` 建立為 HTML 檔；`appsscript.json` 需在專案設定勾選「顯示 appsscript.json 資訊清單檔案」後貼上）。
-3. 修改 `env.js`：
+3. 修改 `env.js` 或設定 Script Properties：
    - `HR_SPREADSHEET_ID`：HR_managerv3 試算表網址 `/d/` 與 `/edit` 之間的字串。
    - 確認 `CYCLE_START_YEAR` 是否為實際週期起始年。
    - `ISO_STATION_SPREADSHEET_ID`（選用）：認證駐站紀錄試算表 ID；留空＝退回組織架構樹 I 欄 `V` 判定認證身分。
    - `CALENDAR_ID`：稽核排程同步的行事曆 ID（留空 = 部署者預設行事曆；指定行事曆需有編輯權限）。
+   - `TWCOHORT_SPREADSHEET_ID`（選用）：twCohort 護理師調派資料試算表 ID。部署者帳號須具備該試算表的讀取權限；優先由 Script Properties 的同名金鑰讀取（建議），未設定時退回 `env.js` 設定。設定後系統將以跨專案唯讀方式提供調派概況預覽。
 4. 在編輯器選取 `deployAllSheets` 執行一次（首次會要求授權，含 Calendar 權限），建立五張工作表：
    「稽核紀錄」「稽核分派」「中心稽核紀錄」「中心稽核排程」「稽核觸發事件」。
    **既有環境升級（v5）**：改執行 `upgradeSheets()` 一次，補上三個新欄位表頭
    （稽核紀錄「稽核日期」、稽核分派與中心稽核排程「行事曆事件ID」）；既有資料列不受影響。
    升級後重新部署，首次操作會要求 Google Calendar 授權。
+   > **駐站調派資訊功能遷移說明**：此功能為跨專案唯讀外部 `twCohort` 試算表，**無需執行 `deployAllSheets` 或 `upgradeSheets` 作此功能的遷移**。只要部署者具備該表讀取權限並於 Script Properties 設定 `TWCOHORT_SPREADSHEET_ID` 後重新部署即可。
 5. 部署 → 新增部署 → 網頁應用程式：
    - 執行身分：**我（部署者）**
    - 存取權限：依 `appsscript.json` 為網域內使用者。
-6. 開啟部署網址，確認讀到真實駐站清單、認證駐站帶金色「ISO 認證」標記。
+6. 開啟部署網址，確認讀到真實駐站清單、認證駐站帶金色「ISO 認證」標記，並可檢視調派概況與排定提示。
 
 ## 本機開發
 
 ```bash
-node test/audit-cycle.test.js    # 駐站週期邏輯測試（64 項）
-node test/center-audit.test.js   # 中心稽核類型邏輯測試（75 項）
-node test/csv-util.test.js       # CSV 匯出匯入純函式測試（28 項）
-open index.html                  # 無 GAS 環境自動切換假資料預覽模式
+node test/station-dispatch.test.js       # 駐站調派紀錄正規化純函式測試
+node test/station-dispatch-data.test.js  # 跨年度調派試算表讀取與快取測試
+node test/station-dispatch-api.test.js   # 調派 API 與角色權限測試
+node test/audit-cycle.test.js            # 駐站週期邏輯測試（84 項）
+node test/center-audit.test.js           # 中心稽核類型邏輯測試（75 項）
+node test/csv-util.test.js               # CSV 匯出匯入純函式測試（28 項）
+open index.html                          # 無 GAS 環境自動切換假資料預覽模式
 ```
 
 ## 稽核紀錄匯出匯入
@@ -95,3 +100,4 @@ open index.html                  # 無 GAS 環境自動切換假資料預覽模�
 - **認證駐站紀錄**（選用）：外部獨立試算表「認證駐站紀錄」工作表（`ENV.ISO_STATION_SPREADSHEET_ID`），以區間記錄每家認證任期——B 欄駐站代碼、D 欄指定時間（＝認證生效年）、E 欄換掉時間（空＝仍在認證），其餘欄位（紀錄ID／名稱／指定人／換站操作人／批次ID）供軌跡追溯。本系統**只讀**；設定後即以此表為認證身分真相、覆寫 I 欄判定。
 - **駐站成員**：HR 試算表「人員職務配置」，C 欄（所屬組別代碼）= 駐站代碼。
 - **稽核紀錄**：本系統「稽核紀錄」工作表，只存原始事實（駐站 × 年度），「是否計入週期」由讀取時計算，刪改紀錄後狀態自動正確。
+- **護理師調派紀錄**（選用，唯讀）：外部 `twCohort` 資料試算表「調派紀錄_{YYYY}」工作表（`TWCOHORT_SPREADSHEET_ID`），唯讀 C 欄資料 JSON，供排定稽核彈窗與駐站卡片檢視當日人力調派概況。

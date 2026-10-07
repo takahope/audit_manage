@@ -11,6 +11,12 @@ const envCode = fs.readFileSync(path.join(__dirname, '..', 'env.js'), 'utf8');
 const dispatchCode = fs.readFileSync(path.join(__dirname, '..', 'StationDispatch.js'), 'utf8');
 const dataServiceCode = fs.readFileSync(path.join(__dirname, '..', 'DataService.js'), 'utf8');
 
+// GAS HTML Service 可呼叫不以底線結尾的全域函式；資料層入口必須保持私有。
+const exposedFunctions = vm.createContext({});
+vm.runInContext(envCode + '\n' + dispatchCode + '\n' + dataServiceCode, exposedFunctions);
+assert.strictEqual(typeof exposedFunctions.getYearStationDispatchSnapshot, 'undefined', '調派資料讀取不得成為可直接呼叫的公開 GAS 入口');
+assert.strictEqual(typeof exposedFunctions.getYearStationDispatchSnapshot_, 'function', '調派資料讀取須為私有 GAS 函式');
+
 function setupTestEnvironment(config = {}) {
   const cacheStore = new Map();
   let putCalls = 0;
@@ -222,7 +228,7 @@ console.log('--- 測試 1: 正常讀取跨年度紀錄、測試表過濾、去�
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'ready', '完整年度且無損毀列時狀態應為 ready');
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), [2024, 2025, 2026], 'loadedYears 應為 [2024, 2025, 2026]');
   assert.deepStrictEqual(Array.from(snapshot.missingYears), [], 'missingYears 應為空陣列');
@@ -242,7 +248,7 @@ console.log('--- 測試 2: 未設定試算表 ID 時回傳 notConfigured ---');
     sheets: []
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'notConfigured');
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), []);
   assert.deepStrictEqual(Array.from(snapshot.missingYears), []);
@@ -259,7 +265,7 @@ console.log('--- 測試 3: 來源試算表 openById 拋錯時回傳 unavailable 
     openByIdThrows: true
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'unavailable');
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), []);
   assert.deepStrictEqual(Array.from(snapshot.missingYears), []);
@@ -289,7 +295,7 @@ console.log('--- 測試 4: 中間年度缺表得 partial 與 missingYears ---');
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'partial', '缺 2025 表應為 partial');
   assert.deepStrictEqual(Array.from(snapshot.missingYears), [2025], 'missingYears 應包含 2025');
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), [2024, 2026], 'loadedYears 應為 [2024, 2026]');
@@ -321,7 +327,7 @@ console.log('--- 測試 5: 單列壞 JSON 或無效資料得 partial ---');
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'partial', '有損毀列或無效列時狀態應為 partial');
   assert.strictEqual(snapshot.dispatches.length, 1, '合法紀錄仍應回傳');
   assert.strictEqual(snapshot.dispatches[0].id, 'd1');
@@ -347,18 +353,18 @@ console.log('--- 測試 6: 快取與 forceRefresh 行為 ---');
   });
 
   // 第一次讀取：未快取，呼叫 getValues
-  const snap1 = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snap1 = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snap1.state, 'ready');
   assert.strictEqual(env.sheetValueCallCounts['調派紀錄_2026'], 1, '第一次應呼叫 1 次 getValues');
   assert.strictEqual(env.cache.getPutCalls(), 1, '第一次應寫入快取 1 次');
 
   // 第二次讀取：forceRefresh = false，快取命中，不再呼叫 getValues
-  const snap2 = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snap2 = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snap2.state, 'ready');
   assert.strictEqual(env.sheetValueCallCounts['調派紀錄_2026'], 1, '快取命中時不應再次呼叫 getValues');
 
   // 第三次讀取：forceRefresh = true，略過快取，重新呼叫 getValues
-  const snap3 = env.context.getYearStationDispatchSnapshot(2026, true);
+  const snap3 = env.context.getYearStationDispatchSnapshot_(2026, true);
   assert.strictEqual(snap3.state, 'ready');
   assert.strictEqual(env.sheetValueCallCounts['調派紀錄_2026'], 2, 'forceRefresh = true 應再次呼叫 getValues');
   assert.strictEqual(env.cache.getPutCalls(), 2, 'forceRefresh = true 應再次更新快取');
@@ -388,7 +394,7 @@ console.log('--- 測試 7: 超過 100 KB 的年度資料仍正常回傳且不呼
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'ready');
   assert.strictEqual(snapshot.dispatches.length, 500, '500 筆資料應全數回傳');
   assert.strictEqual(env.cache.getPutCalls(), 0, '超過 100 KB 時不得呼叫 cache.put');
@@ -406,7 +412,7 @@ console.log('--- 測試 8: 個別工作表讀取失敗得 partial ---');
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'partial', '個別工作表讀取失敗時狀態應為 partial');
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), [2025], '成功讀取的年度應在 loadedYears');
 }
@@ -421,12 +427,12 @@ console.log('--- 測試 9: 非法年度查詢拋錯 ---');
   });
 
   assert.throws(
-    () => env.context.getYearStationDispatchSnapshot(1999, false),
+    () => env.context.getYearStationDispatchSnapshot_(1999, false),
     /調派查詢年度須為 2000–2100/,
     '1999 應拋出年度邊界錯誤'
   );
   assert.throws(
-    () => env.context.getYearStationDispatchSnapshot('abc', false),
+    () => env.context.getYearStationDispatchSnapshot_('abc', false),
     /調派查詢年度須為 2000–2100/,
     '非數字年度應拋出錯誤'
   );
@@ -444,7 +450,7 @@ console.log('--- 測試 10: 無任何符合命名之年度表時回傳 partial �
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'partial', '無任何符合命名之年度表時狀態應為 partial');
   assert.deepStrictEqual(Array.from(snapshot.missingYears), [2026]);
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), []);
@@ -489,7 +495,7 @@ console.log('--- 測試 11: fetchedAt 取所用年度中最早的取得時間 --
     300
   );
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2025, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2025, false);
   assert.strictEqual(snapshot.state, 'ready');
   assert.strictEqual(snapshot.fetchedAt, '2026-10-07 08:00:00', '快照 fetchedAt 應取最早取得時間');
 }
@@ -523,7 +529,7 @@ console.log('--- 測試 12: 跨年度相同 id 紀錄去重 ---');
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2025, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2025, false);
   assert.strictEqual(snapshot.state, 'ready');
   assert.strictEqual(snapshot.dispatches.length, 1, '同 id 應被去重為 1 筆');
   assert.strictEqual(snapshot.dispatches[0].id, 'd1');
@@ -552,7 +558,7 @@ console.log('--- 測試 13: 損毀快取降級重新讀取工作表 ---');
   // 塞入損毀的快取（不合法 JSON 或缺少必要欄位）
   env.cache.put('audit_station_dispatch_v1_sheet-twcohort-123_2026', 'CORRUPTED_CACHE_JSON', 300);
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'ready', '損毀快取應重新自工作表讀取並成功解析');
   assert.strictEqual(snapshot.dispatches.length, 1);
   assert.strictEqual(snapshot.dispatches[0].id, 'd1');
@@ -579,7 +585,7 @@ console.log('--- 測試 14: 異常年份工作表（如 1990）被 isStationDisp
     ]
   });
 
-  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  const snapshot = env.context.getYearStationDispatchSnapshot_(2026, false);
   assert.strictEqual(snapshot.state, 'ready', '1990 被排除後，僅有 2026 應為 ready');
   assert.deepStrictEqual(Array.from(snapshot.loadedYears), [2026], 'loadedYears 不得包含 1990');
   assert.deepStrictEqual(Array.from(snapshot.missingYears), [], 'missingYears 不應因 1990 而列出 1991..2025');

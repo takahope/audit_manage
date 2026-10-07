@@ -86,7 +86,7 @@ function getAuditDashboard() {
     // 駐站調派快照（跨專案讀取）：以局部 try/catch 保護，若非預期例外則降級為 unavailable，不讓儀表板失敗
     let dispatchSnapshot;
     try {
-      dispatchSnapshot = getYearStationDispatchSnapshot(core.currentYear, false);
+      dispatchSnapshot = getYearStationDispatchSnapshot_(core.currentYear, false);
     } catch (dispatchError) {
       console.warn('載入駐站調派快照失敗：' + (dispatchError && dispatchError.message));
       dispatchSnapshot = {
@@ -134,7 +134,7 @@ function getStationDispatchSnapshot(year, forceRefresh) {
     const role = getUserRole_(Session.getActiveUser().getEmail() || '');
     if (role === USER_ROLES.FORBIDDEN) return errorResponse_('權限不足');
     if (!isStationDispatchYear(year)) return errorResponse_('調派查詢年度須為 2000–2100');
-    return successResponse_(getYearStationDispatchSnapshot(Number(year), forceRefresh === true));
+    return successResponse_(getYearStationDispatchSnapshot_(Number(year), forceRefresh === true));
   } catch (error) {
     return errorResponse_('調派資料暫不可用');
   }

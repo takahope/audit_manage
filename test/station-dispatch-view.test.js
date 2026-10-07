@@ -303,6 +303,11 @@ assert.strictEqual(stationForDispatch_('CERT-1').name, '認證站1');
 assert.strictEqual(stationForDispatch_('NORM-1').name, '一般站1');
 assert.strictEqual(stationForDispatch_('OUT-1').name, '委外站1');
 assert.strictEqual(stationForDispatch_('UNKNOWN'), undefined);
+const updatedOutsourced = { code: 'OUT-1', name: '委外站更新', isOutsourced: true, members: [] };
+sandbox.replaceStationInDashboard_(updatedOutsourced);
+assert.strictEqual(stationForDispatch_('OUT-1').name, '委外站更新', '委外站儲存後的單卡資料應更新於委外站清單');
+assert.strictEqual(vm.runInContext('dashboard.normalStations.length', sandbox), 1, '委外站不得被加入一般站清單');
+vm.runInContext('dashboard.outsourcedStations[0].name = "委外站1";', sandbox);
 console.log('✓ stationForDispatch_ 通過');
 
 // 測試 7: dispatchDetailItemHtml_ 轉義與備註
@@ -415,10 +420,28 @@ assert(modalTitle.includes('委外站1'), '彈窗標題應包含委外站名稱'
 sandbox.closeDispatchDetail_();
 console.log('✓ openDispatchDetail_ / closeDispatchDetail_ 通過');
 
+// 狀態未完成時，空分類不能被說成已確認「無調派」。
+vm.runInContext('dispatchSnapshotsByYear.delete(2026); selectedDispatchDate = "2026-10-07";', sandbox);
+sandbox.openDispatchDetail_('A01');
+assert(modalBody.includes('載入中'), '未取得快照時詳情須顯示載入狀態');
+assert(!modalBody.includes('無待指派需求'), '載入中不得宣稱沒有待指派需求');
+vm.runInContext('dispatchSnapshotsByYear.set(2026, {year:2026,state:"unavailable",dispatches:[]});', sandbox);
+sandbox.openDispatchDetail_('A01');
+assert(modalBody.includes('資料暫不可用'), '來源失敗時詳情須顯示不可用狀態');
+assert(!modalBody.includes('無跨站調入紀錄'), '來源失敗時不得宣稱沒有調入紀錄');
+vm.runInContext('dispatchSnapshotsByYear.set(2026, testSnapshot);', sandbox);
+vm.runInContext('dispatchSnapshotsByYear.set(2028, partialSnapshot); selectedDispatchDate = "2028-05-01";', sandbox);
+sandbox.openDispatchDetail_('A01');
+assert(modalBody.includes('資料未完整'), '部分年度缺失時詳情須明示資料未完整');
+assert(!modalBody.includes('無跨站調入紀錄'), '資料未完整時不得宣稱沒有調入紀錄');
+vm.runInContext('selectedDispatchDate = "2026-10-07";', sandbox);
+sandbox.closeDispatchDetail_();
+
 // 測試 10: 事件排除驗證（點擊摘要按鈕不得觸發歷年紀錄彈窗）
 console.log('10. 測試事件排除（點擊摘要按鈕 vs 卡片背景）');
 let historyModalOpened = false;
 let dispatchDetailOpened = false;
+const realOpenDispatchDetail = sandbox.openDispatchDetail_;
 sandbox.openHistoryModal = function () { historyModalOpened = true; };
 sandbox.openDispatchDetail_ = function () { dispatchDetailOpened = true; };
 
@@ -461,6 +484,7 @@ const fakeEmptyDiv = {
 };
 fakeCard.listeners.click({ target: fakeEmptyDiv });
 assert(historyModalOpened, '點擊卡片非互動區域應正常觸發 openHistoryModal');
+sandbox.openDispatchDetail_ = realOpenDispatchDetail;
 console.log('✓ 事件隔離通過');
 
 // ==========================================
@@ -605,6 +629,7 @@ console.log('✓ renderAssignDispatchHint_ 基本更新通過');
 console.log('13. 測試跨年度非同步載入與遲到回應隔離');
 let resolveSnapshot;
 let rejectSnapshot;
+const realEnsureDispatchSnapshot = sandbox.ensureDispatchSnapshot_;
 sandbox.ensureDispatchSnapshot_ = function (year, force) {
   return new Promise(function (resolve, reject) {
     resolveSnapshot = resolve;
@@ -701,6 +726,14 @@ return Promise.resolve().then(function () {
   assert.strictEqual(assignDateEl.value, '2026-10-07', 'openAssignModal 應填入 yyyy-MM-dd 日期');
   assert.strictEqual(assignHintEl.textContent, '該日有 2 名待指派需求，請核對人力安排。', 'openAssignModal 應立即渲染初始日期的調派提示');
   assert(assignOverlayEl.classList.contains('open'), 'openAssignModal 應開啟 overlay');
+  sandbox._testDashboard2.outsourcedStations = [{code:'OUT-1', name:'委外站1', assignment:{plannedDate:'2026/10/07', auditorEmails:''}}];
+  sandbox.closeAssignModal();
+  openAssignModal('OUT-1');
+  assert.strictEqual(getOrCreateElement('assign-title').textContent, '排定稽核 — 委外站1', '委外站應可開啟稽核排定彈窗');
+  assert(assignOverlayEl.classList.contains('open'), '委外站排定彈窗應開啟');
+  assert.strictEqual(assignHintEl.textContent, '該日無已登錄調派；此資訊不代表已確認出勤。', '委外站應顯示該日調派提示');
+  sandbox.closeAssignModal();
+  openAssignModal('A01');
   console.log('✓ openAssignModal 初始化通過');
 
   // 測試 15: input / change 事件連動
@@ -737,6 +770,41 @@ return Promise.resolve().then(function () {
   assert(saveAssignmentCalled, '儲存分派應成功呼叫，不被調派狀態阻擋');
   console.log('✓ 儲存獨立性驗證通過');
 
+  // 強制重新整理失敗時，保留舊快照與時間，並在所有決策提示標為舊資料。
+  vm.runInContext('dispatchSnapshotsByYear.set(2026, testSnapshot); selectedDispatchDate = "2026-10-07";', sandbox);
+  testSnapshot.fetchedAt = '2026-10-07T08:00:00.000Z';
+  sandbox.callServer = function (name, year, force) {
+    assert.strictEqual(name, 'getStationDispatchSnapshot');
+    assert.strictEqual(year, 2026);
+    assert.strictEqual(force, true);
+    return Promise.reject(new Error('來源暫時失敗'));
+  };
+  return realEnsureDispatchSnapshot(2026, true).then(function () {
+    assert.strictEqual(vm.runInContext('dispatchSnapshotsByYear.get(2026)', sandbox), testSnapshot, '重新整理失敗須保留舊快照');
+    sandbox.updateDispatchMeta_();
+    assert(getOrCreateElement('station-dispatch-fetched-at').textContent.includes('2026-10-07T08:00:00.000Z'), '須顯示舊快照時間');
+    assert(getOrCreateElement('station-dispatch-fetched-at').textContent.includes('重新整理失敗'), '須顯示重新整理失敗');
+    assert(sandbox.renderDispatchBadge_({code:'A01'}).includes('舊資料'), '卡片須標示舊資料');
+    assignDateEl.value = '2026-10-07';
+    vm.runInContext('assigningCode = "A01";', sandbox);
+    sandbox.renderAssignDispatchHint_();
+    assert(assignHintEl.textContent.includes('舊資料'), '排定稽核提示須標示舊資料');
+    sandbox.openDispatchDetail_('A01');
+    assert(getOrCreateElement('dispatch-detail-body').innerHTML.includes('重新整理失敗，顯示舊資料'), '詳情須顯示舊資料警示');
+    sandbox.callServer = function () { return Promise.resolve({year:2026,state:'ready',fetchedAt:'2026-10-07T09:00:00.000Z',dispatches:[]}); };
+    return realEnsureDispatchSnapshot(2026, true);
+  }).then(function () {
+    sandbox.updateDispatchMeta_();
+    assert(!getOrCreateElement('station-dispatch-fetched-at').textContent.includes('重新整理失敗'), '重新整理成功應清除失敗警示');
+    assert(!sandbox.renderDispatchBadge_({code:'A01'}).includes('舊資料'), '重新整理成功應清除卡片舊資料標記');
+    const freshSnapshot = vm.runInContext('dispatchSnapshotsByYear.get(2026)', sandbox);
+    sandbox.callServer = function () { return Promise.resolve({year:2026,state:'unavailable',fetchedAt:'',dispatches:[]}); };
+    return realEnsureDispatchSnapshot(2026, true).then(function () {
+      assert.strictEqual(vm.runInContext('dispatchSnapshotsByYear.get(2026)', sandbox), freshSnapshot, '來源回傳不可用狀態時亦須保留舊快照');
+      sandbox.updateDispatchMeta_();
+      assert(getOrCreateElement('station-dispatch-fetched-at').textContent.includes('重新整理失敗'), '來源回傳不可用狀態須標記重新整理失敗');
+    });
+  });
+}).then(function () {
   console.log('\n全數 Task 5 & Task 6 測試通過！✓');
 });
-

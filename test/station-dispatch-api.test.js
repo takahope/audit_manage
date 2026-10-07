@@ -75,7 +75,7 @@ function setupApiContext(options = {}) {
   sandbox.getUserRole_ = function (email) {
     return currentUserRole;
   };
-  sandbox.getYearStationDispatchSnapshot = function (year, forceRefresh) {
+  sandbox.getYearStationDispatchSnapshot_ = function (year, forceRefresh) {
     snapshotCalls.push({ year, forceRefresh });
     return snapshotImpl(year, forceRefresh);
   };

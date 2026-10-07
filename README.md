@@ -45,6 +45,7 @@ GAS Web App：完整稽核管理平台——駐站收案三年週期＋七類中
 | `AuditCycle.js` | 駐站週期計算純函式（可用 node 測試） |
 | `CenterAudit.js` | 中心八類稽核類型、頻率策略純函式（可用 node 測試） |
 | `CsvUtil.js` | CSV 序列化／解析／合併去重純函式（匯出匯入用，可用 node 測試） |
+| `StationDispatch.js` | 跨專案調派資料的正規化與日期處理純函式（可用 node 測試） |
 | `DataService.js` | HR 試算表跨表讀取、稽核紀錄讀寫 |
 | `code.js` | `doGet` 與前端 API |
 | `deploy.js` | 稽核紀錄工作表初始化 |
@@ -54,7 +55,7 @@ GAS Web App：完整稽核管理平台——駐站收案三年週期＋七類中
 
 1. 開啟 [script.new](https://script.new) 建立新 Apps Script 專案，命名「稽核駐站分配」。
    - 建議改從一個新的 Google Sheet 進入「擴充功能 → Apps Script」建立**綁定專案**，稽核紀錄就存在該試算表，`AUDIT_SPREADSHEET_ID` 可留空。
-2. 依檔名逐一建立檔案並貼上內容（`index.html` 建立為 HTML 檔；`appsscript.json` 需在專案設定勾選「顯示 appsscript.json 資訊清單檔案」後貼上）。
+2. 依檔名逐一建立檔案並貼上內容，包含 `StationDispatch.js`（`index.html` 建立為 HTML 檔；`appsscript.json` 需在專案設定勾選「顯示 appsscript.json 資訊清單檔案」後貼上）。
 3. 修改 `env.js` 或設定 Script Properties：
    - `HR_SPREADSHEET_ID`：HR_managerv3 試算表網址 `/d/` 與 `/edit` 之間的字串。
    - 確認 `CYCLE_START_YEAR` 是否為實際週期起始年。
@@ -78,6 +79,7 @@ GAS Web App：完整稽核管理平台——駐站收案三年週期＋七類中
 node test/station-dispatch.test.js       # 駐站調派紀錄正規化純函式測試
 node test/station-dispatch-data.test.js  # 跨年度調派試算表讀取與快取測試
 node test/station-dispatch-api.test.js   # 調派 API 與角色權限測試
+node test/station-dispatch-view.test.js  # 調派卡片、詳情與排定提示測試
 node test/audit-cycle.test.js            # 駐站週期邏輯測試（84 項）
 node test/center-audit.test.js           # 中心稽核類型邏輯測試（75 項）
 node test/csv-util.test.js               # CSV 匯出匯入純函式測試（28 項）

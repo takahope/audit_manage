@@ -1113,6 +1113,7 @@
 
     const dispatchSnapshotsByYear = new Map();
     const dispatchRequestsByYear = new Map();
+    const dispatchRefreshFailuresByYear = new Set();
     let selectedDispatchDate = taipeiToday_();
 
     function getDispatchSnapshotForDate_(date) {
@@ -1131,12 +1132,26 @@
       if (!forceRefresh && dispatchRequestsByYear.has(year)) return dispatchRequestsByYear.get(year);
       const request = callServer('getStationDispatchSnapshot', year, forceRefresh === true)
         .then(function (snapshot) {
-          if (dispatchRequestsByYear.get(year) === request) dispatchSnapshotsByYear.set(year, snapshot);
+          if (dispatchRequestsByYear.get(year) === request) {
+            const previous = dispatchSnapshotsByYear.get(year);
+            if (forceRefresh && snapshot.state === 'unavailable' && previous && previous.state !== 'unavailable') {
+              dispatchRefreshFailuresByYear.add(year);
+              return previous;
+            }
+            dispatchSnapshotsByYear.set(year, snapshot);
+            dispatchRefreshFailuresByYear.delete(year);
+          }
           return snapshot;
         })
         .catch(function () {
           const unavailable = { year: year, state: 'unavailable', loadedYears: [], missingYears: [], fetchedAt: '', dispatches: [] };
-          if (dispatchRequestsByYear.get(year) === request) dispatchSnapshotsByYear.set(year, unavailable);
+          if (dispatchRequestsByYear.get(year) !== request) return dispatchSnapshotsByYear.get(year) || unavailable;
+          const previous = dispatchSnapshotsByYear.get(year);
+          if (forceRefresh && previous && previous.state !== 'unavailable') {
+            dispatchRefreshFailuresByYear.add(year);
+            return previous;
+          }
+          dispatchSnapshotsByYear.set(year, unavailable);
           return unavailable;
         })
         .finally(function () { if (dispatchRequestsByYear.get(year) === request) dispatchRequestsByYear.delete(year); });
@@ -1198,8 +1213,9 @@
       const total = view.pending.length + view.incoming.length + view.outgoing.length + view.other.length;
       const extra = total > 1 ? ' · 另 ' + (total - 1) + ' 筆' : '';
       const incomplete = view.state === 'partial' && total > 0 ? ' · 資料未完整' : '';
+      const stale = dispatchRefreshFailuresByYear.has(Number(selectedDispatchDate.slice(0, 4))) ? ' · 舊資料' : '';
       return '<button type="button" class="dispatch-badge" data-action="dispatch-detail" data-code="' +
-        escapeHtml(station.code) + '">' + escapeHtml(dispatchPrimary_(view) + extra + incomplete) + '</button>';
+        escapeHtml(station.code) + '">' + escapeHtml(dispatchPrimary_(view) + extra + incomplete + stale) + '</button>';
     }
 
     function stationForDispatch_(code) {
@@ -1476,6 +1492,7 @@
         dashboard = data;
         if (dashboard && dashboard.dispatchSnapshot && dashboard.dispatchSnapshot.year) {
           dispatchSnapshotsByYear.set(Number(dashboard.dispatchSnapshot.year), dashboard.dispatchSnapshot);
+          dispatchRefreshFailuresByYear.delete(Number(dashboard.dispatchSnapshot.year));
         }
         pruneStaleSelections_();
         renderAll();
@@ -1721,6 +1738,10 @@
       const snapshot = dispatchSnapshotsByYear.get(year);
       if (!snapshot) {
         fetchedAtEl.textContent = '載入中…';
+        return;
+      }
+      if (dispatchRefreshFailuresByYear.has(year)) {
+        fetchedAtEl.textContent = (snapshot.fetchedAt ? '資料時間：' + snapshot.fetchedAt + '；' : '') + '重新整理失敗，顯示舊資料';
         return;
       }
       if (snapshot.state === 'notConfigured') {
@@ -2104,12 +2125,12 @@
 
     /** 將更新後的單站寫回記憶體 dashboard（依 code 比對，認證旗標穩定故就地替換） */
     function replaceStationInDashboard_(st) {
-      const arrays = [dashboard.certifiedStations, dashboard.normalStations];
+      const arrays = [dashboard.certifiedStations, dashboard.normalStations, dashboard.outsourcedStations || []];
       for (let k = 0; k < arrays.length; k++) {
         const i = arrays[k].findIndex(function (s) { return s.code === st.code; });
         if (i !== -1) { arrays[k][i] = st; return; }
       }
-      (st.isCertified ? dashboard.certifiedStations : dashboard.normalStations).push(st);
+      (st.isOutsourced ? dashboard.outsourcedStations : st.isCertified ? dashboard.certifiedStations : dashboard.normalStations).push(st);
     }
 
     /**
@@ -2576,7 +2597,7 @@
     let assigningCode = null; // 分派 modal 目前操作的駐站
 
     function openAssignModal(stationCode) {
-      const station = allStations().find(s => s.code === stationCode);
+      const station = stationForDispatch_(stationCode);
       if (!station) return;
       assigningCode = stationCode;
       const a = station.assignment;
@@ -2613,7 +2634,8 @@
       if (!hint) return;
       if (!date || !assigningCode) { hint.textContent = ''; return; }
       const view = getStationDispatchView_(assigningCode, date);
-      hint.textContent = assignDispatchMessage_(view);
+      hint.textContent = assignDispatchMessage_(view) +
+        (dispatchRefreshFailuresByYear.has(Number(date.slice(0, 4))) ? '（重新整理失敗，顯示舊資料）' : '');
       if (view.state !== 'loading') return;
       const code = assigningCode;
       ensureDispatchSnapshot_(Number(date.slice(0, 4)), false)
@@ -3148,6 +3170,16 @@
       if (!overlay) return;
 
       const view = getStationDispatchView_(code, selectedDispatchDate);
+      let dispatchStatus = view.state === 'loading' ? '調派資料載入中' :
+        view.state === 'unavailable' ? '調派資料暫不可用' :
+        view.state === 'notConfigured' ? '調派資料未啟用' :
+        view.state === 'partial' ? '調派資料未完整，空白分類仍需向來源確認' : '';
+      if (dispatchRefreshFailuresByYear.has(Number(selectedDispatchDate.slice(0, 4)))) {
+        const snapshot = getDispatchSnapshotForDate_(selectedDispatchDate);
+        dispatchStatus += (dispatchStatus ? '；' : '') + '重新整理失敗，顯示舊資料' +
+          (snapshot && snapshot.fetchedAt ? '（資料時間：' + snapshot.fetchedAt + '）' : '');
+      }
+      const showGroups = view.state === 'ready' || view.state === 'partial';
 
       const titleEl = document.getElementById('dispatch-detail-title');
       if (titleEl) {
@@ -3159,7 +3191,7 @@
         if (records.length > 0) {
           content = '<ul class="dispatch-detail-list">' + records.map(dispatchDetailItemHtml_).join('') + '</ul>';
         } else {
-          content = '<p class="dispatch-empty-hint">' + escapeHtml(emptyText) + '</p>';
+          content = '<p class="dispatch-empty-hint">' + escapeHtml(view.state === 'partial' ? '未查得（資料未完整）' : emptyText) + '</p>';
         }
         return '<div class="dispatch-detail-section">' +
           '<h4>' + escapeHtml(title) + '（' + records.length + ' 筆）</h4>' +
@@ -3181,10 +3213,12 @@
           '<div class="dispatch-detail-date-hint" style="color:var(--color-muted);margin-bottom:var(--space-2);font-size:13px;">' +
             '查詢日期：<span class="mono">' + escapeHtml(selectedDispatchDate) + '</span>' +
           '</div>' +
-          renderGroup('待指派需求', view.pending, '無待指派需求') +
-          renderGroup('調入本站', view.incoming, '無跨站調入紀錄') +
-          renderGroup('自本站調出', view.outgoing, '無自本站調出紀錄') +
-          renderGroup('本站其他排班', view.other, '無本站其他排班紀錄') +
+          (dispatchStatus ? '<p class="dispatch-empty-hint" role="status">' + escapeHtml(dispatchStatus) + '</p>' : '') +
+          (showGroups ?
+            renderGroup('待指派需求', view.pending, '無待指派需求') +
+            renderGroup('調入本站', view.incoming, '無跨站調入紀錄') +
+            renderGroup('自本站調出', view.outgoing, '無自本站調出紀錄') +
+            renderGroup('本站其他排班', view.other, '無本站其他排班紀錄') : '') +
           '<div class="dispatch-detail-section">' +
             '<h4>編制名單（供對照）（' + ((station.members && station.members.length) || 0) + ' 人）</h4>' +
             membersContent +
@@ -3211,7 +3245,7 @@
     }
 
     function confirmCancelAssignment(stationCode) {
-      const station = allStations().find(s => s.code === stationCode);
+      const station = stationForDispatch_(stationCode);
       openModal({
         title: '取消稽核分派',
         bodyHtml:

@@ -130,7 +130,7 @@ function readCachedStationDispatchYear_(sheet, sourceId, sourceYear, forceRefres
  * @param {boolean} [forceRefresh=false] - 是否略過快取重新讀取
  * @returns {{year: number, state: 'ready'|'partial'|'unavailable'|'notConfigured', loadedYears: number[], missingYears: number[], fetchedAt: string, dispatches: Array<Object>}}
  */
-function getYearStationDispatchSnapshot(year, forceRefresh) {
+function getYearStationDispatchSnapshot_(year, forceRefresh) {
   if (!isStationDispatchYear(year)) throw new Error('調派查詢年度須為 2000–2100');
   year = Number(year);
   const sourceId = getTwCohortSpreadsheetId_();

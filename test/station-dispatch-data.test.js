@@ -559,4 +559,31 @@ console.log('--- 測試 13: 損毀快取降級重新讀取工作表 ---');
   assert.strictEqual(env.sheetValueCallCounts['調派紀錄_2026'], 1, '應降級呼叫工作表 getValues');
 }
 
+console.log('--- 測試 14: 異常年份工作表（如 1990）被 isStationDispatchYear 排除，不污染 missingYears ---');
+{
+  const rawValid = {
+    id: 'd1',
+    status: '有效',
+    stationCode: 'GRP-CO-A01',
+    startDate: '2026-01-01',
+    endDate: '2026-01-02'
+  };
+
+  const env = setupTestEnvironment({
+    properties: {
+      TWCOHORT_SPREADSHEET_ID: 'sheet-twcohort-123'
+    },
+    sheets: [
+      { name: '調派紀錄_1990', rows: ['{}'] }, // 超出 2000-2100，應被忽略
+      { name: '調派紀錄_2026', rows: [JSON.stringify(rawValid)] }
+    ]
+  });
+
+  const snapshot = env.context.getYearStationDispatchSnapshot(2026, false);
+  assert.strictEqual(snapshot.state, 'ready', '1990 被排除後，僅有 2026 應為 ready');
+  assert.deepStrictEqual(Array.from(snapshot.loadedYears), [2026], 'loadedYears 不得包含 1990');
+  assert.deepStrictEqual(Array.from(snapshot.missingYears), [], 'missingYears 不應因 1990 而列出 1991..2025');
+  assert.strictEqual(snapshot.dispatches.length, 1);
+}
+
 console.log('✓ All station-dispatch-data tests defined and passed.');

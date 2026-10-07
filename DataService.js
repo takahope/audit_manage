@@ -99,7 +99,7 @@ function readStationDispatchSheet_(sheet) {
  */
 function readCachedStationDispatchYear_(sheet, sourceId, sourceYear, forceRefresh) {
   const cache = CacheService.getScriptCache();
-  const key = 'audit_station_dispatch_v1_' + sourceId + '_' + sourceYear;
+  const key = CACHE_KEYS.DISPATCH_PREFIX + sourceId + '_' + sourceYear;
   if (!forceRefresh) {
     let cached = null;
     try { cached = cache.get(key); } catch (error) { console.warn('調派快取讀取失敗：' + sourceYear); }
@@ -142,9 +142,17 @@ function getYearStationDispatchSnapshot(year, forceRefresh) {
     spreadsheet = SpreadsheetApp.openById(sourceId);
     sheets = spreadsheet.getSheets();
   } catch (error) { console.warn('調派試算表不可用'); return Object.assign(base, { state: 'unavailable' }); }
-  const years = sheets.map(function (sheet) { return /^調派紀錄_(\d{4})$/.exec(sheet.getName()); })
-    .filter(Boolean).map(function (match) { return Number(match[1]); })
-    .filter(function (sourceYear) { return sourceYear <= year; }).sort(function (a, b) { return a - b; });
+  const sheetByYear = {};
+  sheets.forEach(function (sheet) {
+    const match = /^調派紀錄_(\d{4})$/.exec(sheet.getName());
+    if (match) {
+      const sourceYear = Number(match[1]);
+      if (isStationDispatchYear(sourceYear) && sourceYear <= year) {
+        sheetByYear[sourceYear] = sheet;
+      }
+    }
+  });
+  const years = Object.keys(sheetByYear).map(Number).sort(function (a, b) { return a - b; });
   const missingYears = [];
   for (let sourceYear = years[0] || year; sourceYear <= year; sourceYear++) {
     if (years.indexOf(sourceYear) === -1) missingYears.push(sourceYear);
@@ -156,7 +164,7 @@ function getYearStationDispatchSnapshot(year, forceRefresh) {
   let fetchedAt = '';
   years.forEach(function (sourceYear) {
     try {
-      const sheet = spreadsheet.getSheetByName('調派紀錄_' + sourceYear);
+      const sheet = sheetByYear[sourceYear];
       const annual = readCachedStationDispatchYear_(sheet, sourceId, sourceYear, forceRefresh);
       loadedYears.push(sourceYear);
       invalidRows += annual.invalidRows;

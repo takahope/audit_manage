@@ -29,6 +29,12 @@ const ENV = {
   ISO_STATION_SPREADSHEET_ID: '',
 
   /**
+   * 駐站調派紀錄試算表 ID（twCohort 外部試算表，本系統只讀）。
+   * 留空 = 退回 Script Properties 的 TWCOHORT_SPREADSHEET_ID 或 notConfigured。
+   */
+  TWCOHORT_SPREADSHEET_ID: '',
+
+  /**
    * 三年週期錨定起始年的「預設值」（西元）。
    * 使用者可在前端「週期設定」中變更，實際生效值存於
    * Script Properties（key 見 CYCLE_START_YEAR_PROPERTY_KEY），此值僅在未設定時使用。
@@ -97,6 +103,7 @@ const CACHE_KEYS = {
   MEMBERS: 'audit_members_v1',
   AUDITORS: 'audit_auditors_v1',
   CERT_TENURES: 'audit_cert_tenures_v1',
+  DISPATCH_PREFIX: 'audit_station_dispatch_v1_',
 };
 
 /**
@@ -211,5 +218,9 @@ const COL = {
     REMOVER_EMAIL: 7,    // H 欄：換站操作人 Email
     REMOVER_NAME: 8,     // I 欄：換站操作人姓名
     BATCH_ID: 9,         // J 欄：批次ID
+  },
+  // 外部 twCohort「調派紀錄_YYYY」年度工作表（C 欄為 JSON 紀錄）
+  DISPATCH: {
+    JSON: 2,             // C 欄（0-based: A=0, B=1, C=2）
   },
 };

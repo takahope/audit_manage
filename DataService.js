@@ -55,6 +55,127 @@ function getCertSpreadsheet_() {
 }
 
 /**
+ * 取得 twCohort 駐站調派紀錄試算表 ID。
+ * 優先從 Script Properties 讀取，未設定時退回 ENV.TWCOHORT_SPREADSHEET_ID。
+ * @returns {string}
+ */
+function getTwCohortSpreadsheetId_() {
+  return String(PropertiesService.getScriptProperties().getProperty('TWCOHORT_SPREADSHEET_ID') || ENV.TWCOHORT_SPREADSHEET_ID || '').trim();
+}
+
+/**
+ * 讀取單一年度的調派紀錄工作表 C 欄 JSON，並轉換為正規化紀錄清單。
+ *
+ * @param {Sheet} sheet - 來源工作表（調派紀錄_YYYY）
+ * @returns {{records: Array<Object>, invalidRows: number}}
+ */
+function readStationDispatchSheet_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { records: [], invalidRows: 0 };
+  const cells = sheet.getRange(2, COL.DISPATCH.JSON + 1, lastRow - 1, 1).getValues();
+  let invalidRows = 0;
+  const records = [];
+  cells.forEach(function (cell) {
+    if (!String(cell[0] || '').trim()) return;
+    try {
+      const raw = JSON.parse(String(cell[0]));
+      if (raw.status !== '有效') return;
+      const normalized = normalizeStationDispatchRecord(raw);
+      if (normalized) records.push(normalized); else invalidRows++;
+    } catch (error) { invalidRows++; }
+  });
+  return { records, invalidRows };
+}
+
+/**
+ * 讀取具快取的單一年度調派紀錄。
+ * 單筆超過 100 KB 時跳過快取寫入，直接回傳結果。
+ *
+ * @param {Sheet} sheet - 來源工作表
+ * @param {string} sourceId - 來源試算表 ID
+ * @param {number} sourceYear - 來源年度
+ * @param {boolean} forceRefresh - 是否強制略過快取
+ * @returns {{records: Array<Object>, invalidRows: number, fetchedAt: string}}
+ */
+function readCachedStationDispatchYear_(sheet, sourceId, sourceYear, forceRefresh) {
+  const cache = CacheService.getScriptCache();
+  const key = 'audit_station_dispatch_v1_' + sourceId + '_' + sourceYear;
+  if (!forceRefresh) {
+    let cached = null;
+    try { cached = cache.get(key); } catch (error) { console.warn('調派快取讀取失敗：' + sourceYear); }
+    if (cached) {
+      try {
+        const item = JSON.parse(cached);
+        if (Array.isArray(item.records) && Number.isInteger(item.invalidRows) && item.fetchedAt) return item;
+      } catch (error) { console.warn('調派年度快取格式損毀：' + sourceYear); }
+    }
+  }
+  const result = readStationDispatchSheet_(sheet);
+  const item = {
+    records: result.records,
+    invalidRows: result.invalidRows,
+    fetchedAt: Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss')
+  };
+  const text = JSON.stringify(item);
+  if (Utilities.newBlob(text).getBytes().length < 100000) {
+    try { cache.put(key, text, 300); } catch (error) { console.warn('調派快取寫入失敗：' + sourceYear); }
+  }
+  return item;
+}
+
+/**
+ * 取得指定年度的駐站調派快照。
+ *
+ * @param {number|string} year - 查詢年度（2000–2100）
+ * @param {boolean} [forceRefresh=false] - 是否略過快取重新讀取
+ * @returns {{year: number, state: 'ready'|'partial'|'unavailable'|'notConfigured', loadedYears: number[], missingYears: number[], fetchedAt: string, dispatches: Array<Object>}}
+ */
+function getYearStationDispatchSnapshot(year, forceRefresh) {
+  if (!isStationDispatchYear(year)) throw new Error('調派查詢年度須為 2000–2100');
+  year = Number(year);
+  const sourceId = getTwCohortSpreadsheetId_();
+  const base = { year, state: 'notConfigured', loadedYears: [], missingYears: [], fetchedAt: '', dispatches: [] };
+  if (!sourceId) return base;
+  let spreadsheet;
+  let sheets;
+  try {
+    spreadsheet = SpreadsheetApp.openById(sourceId);
+    sheets = spreadsheet.getSheets();
+  } catch (error) { console.warn('調派試算表不可用'); return Object.assign(base, { state: 'unavailable' }); }
+  const years = sheets.map(function (sheet) { return /^調派紀錄_(\d{4})$/.exec(sheet.getName()); })
+    .filter(Boolean).map(function (match) { return Number(match[1]); })
+    .filter(function (sourceYear) { return sourceYear <= year; }).sort(function (a, b) { return a - b; });
+  const missingYears = [];
+  for (let sourceYear = years[0] || year; sourceYear <= year; sourceYear++) {
+    if (years.indexOf(sourceYear) === -1) missingYears.push(sourceYear);
+  }
+  const byId = {};
+  const loadedYears = [];
+  let invalidRows = 0;
+  let readFailures = 0;
+  let fetchedAt = '';
+  years.forEach(function (sourceYear) {
+    try {
+      const sheet = spreadsheet.getSheetByName('調派紀錄_' + sourceYear);
+      const annual = readCachedStationDispatchYear_(sheet, sourceId, sourceYear, forceRefresh);
+      loadedYears.push(sourceYear);
+      invalidRows += annual.invalidRows;
+      if (!fetchedAt || annual.fetchedAt < fetchedAt) fetchedAt = annual.fetchedAt;
+      annual.records.filter(function (record) { return overlapsStationDispatchYear(record, year); })
+        .forEach(function (record) { byId[record.id] = record; });
+    } catch (error) { readFailures++; console.warn('調派年度表讀取失敗：' + sourceYear); }
+  });
+  return {
+    year,
+    state: missingYears.length || invalidRows || readFailures ? 'partial' : 'ready',
+    loadedYears,
+    missingYears,
+    fetchedAt,
+    dispatches: Object.keys(byId).map(function (id) { return byId[id]; })
+  };
+}
+
+/**
  * 讀取工作表的資料列（去表頭、過濾關鍵欄為空的列）。
  *
  * @param {Spreadsheet} ss

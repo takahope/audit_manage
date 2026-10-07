@@ -105,4 +105,23 @@ assert.strictEqual(isStationDispatchYear('2026.5'), false, '小數應不合法')
 assert.strictEqual(isStationDispatchYear(''), false, '空字串應不合法');
 assert.strictEqual(isStationDispatchYear(null), false, 'null 應不合法');
 
+// nurseName 與 assignmentStatus 空白防禦性 trim
+const paddedPendingRecord1 = normalizeStationDispatchRecord({
+  ...fallbackRaw,
+  id: 'd_pad1',
+  nurseName: ' 待指派 ',
+  assignmentStatus: ' 已指派 '
+});
+assert.strictEqual(paddedPendingRecord1.isPending, true, 'nurseName 帶空白的待指派應使 isPending 為 true');
+assert.strictEqual(paddedPendingRecord1.nurseName, '待指派');
+
+const paddedPendingRecord2 = normalizeStationDispatchRecord({
+  ...fallbackRaw,
+  id: 'd_pad2',
+  nurseName: ' 王小美 ',
+  assignmentStatus: ' 待指派 '
+});
+assert.strictEqual(paddedPendingRecord2.isPending, true, 'assignmentStatus 帶空白的待指派應使 isPending 為 true');
+assert.strictEqual(paddedPendingRecord2.nurseName, '王小美');
+
 console.log('✓ All station-dispatch tests passed successfully.');

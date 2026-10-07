@@ -41,13 +41,15 @@ function normalizeStationDispatchRecord(raw) {
   const stationCode = String(raw.stationCode || '').trim().toUpperCase();
   const originalStationCode = String(raw.originalStationCode || '').trim().toUpperCase();
   if (!stationCode || !validDispatchDate_(startDate) || !validDispatchDate_(endDate) || endDate < startDate) return null;
+  const nurseName = String(raw.nurseName || '').trim();
+  const assignmentStatus = String(raw.assignmentStatus || '').trim();
   return {
     id: String(raw.id).trim(),
     stationCode: stationCode,
     originalStationCode: originalStationCode,
     startDate: startDate,
     endDate: endDate,
-    nurseName: String(raw.nurseName || '').trim(),
+    nurseName: nurseName,
     nurseEmail: String(raw.nurseEmail || '').trim(),
     startTime: String(raw.startTime || '').trim(),
     endTime: String(raw.endTime || '').trim(),
@@ -55,7 +57,7 @@ function normalizeStationDispatchRecord(raw) {
     hours: Number(raw.hours) || 0,
     note: String(raw.note || '').trim(),
     demandCount: Math.max(1, Number(raw.demandCount) || 1),
-    isPending: raw.assignmentStatus === '待指派' || raw.nurseName === '待指派',
+    isPending: assignmentStatus === '待指派' || nurseName === '待指派',
     isTemporary: Boolean(originalStationCode && originalStationCode !== stationCode)
   };
 }

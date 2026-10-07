@@ -83,6 +83,22 @@ function getAuditDashboard() {
     const currentMonth = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM'));
     const center = buildCenterDashboard_({ year: core.currentYear, month: currentMonth }, core.cycleStartYear, core.mode);
 
+    // 駐站調派快照（跨專案讀取）：以局部 try/catch 保護，若非預期例外則降級為 unavailable，不讓儀表板失敗
+    let dispatchSnapshot;
+    try {
+      dispatchSnapshot = getYearStationDispatchSnapshot(core.currentYear, false);
+    } catch (dispatchError) {
+      console.warn('載入駐站調派快照失敗：' + (dispatchError && dispatchError.message));
+      dispatchSnapshot = {
+        year: core.currentYear,
+        state: 'unavailable',
+        loadedYears: [],
+        missingYears: [],
+        fetchedAt: '',
+        dispatches: [],
+      };
+    }
+
     return successResponse_({
       currentYear: core.currentYear,
       mode: core.mode,
@@ -99,11 +115,31 @@ function getAuditDashboard() {
       triggerCategories: TRIGGER_CATEGORIES,
       userEmail: userEmail,
       userRole: userRole,
+      dispatchSnapshot: dispatchSnapshot,
     });
   } catch (error) {
     return errorResponse_(error.message);
   }
 }
+
+/**
+ * 取得指定年度的駐站調派快照（唯讀 API，供前端切換年度或強制重新整理）。
+ *
+ * @param {number|string} year - 查詢年度（2000–2100）
+ * @param {boolean} [forceRefresh=false] - 是否略過快取重新讀取
+ * @returns {string} JSON 回應
+ */
+function getStationDispatchSnapshot(year, forceRefresh) {
+  try {
+    const role = getUserRole_(Session.getActiveUser().getEmail() || '');
+    if (role === USER_ROLES.FORBIDDEN) return errorResponse_('權限不足');
+    if (!isStationDispatchYear(year)) return errorResponse_('調派查詢年度須為 2000–2100');
+    return successResponse_(getYearStationDispatchSnapshot(Number(year), forceRefresh === true));
+  } catch (error) {
+    return errorResponse_('調派資料暫不可用');
+  }
+}
+
 
 /**
  * 組裝駐站儀表板核心：逐站評估 + 週期摘要。

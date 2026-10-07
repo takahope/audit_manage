@@ -140,7 +140,6 @@ function getStationDispatchSnapshot(year, forceRefresh) {
   }
 }
 
-
 /**
  * 組裝駐站儀表板核心：逐站評估 + 週期摘要。
  * 由 getAuditDashboard（全量）與各儲存 API 的部分更新（stationDeltaFor_）共用，

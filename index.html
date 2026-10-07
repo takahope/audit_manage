@@ -2620,7 +2620,11 @@
         .then(function () {
           if (assigningCode === code && document.getElementById('assign-date').value === date) renderAssignDispatchHint_();
         })
-        .catch(function () { if (assigningCode === code) hint.textContent = '調派資料暫不可用'; });
+        .catch(function () {
+          if (assigningCode === code && document.getElementById('assign-date').value === date) {
+            hint.textContent = '調派資料暫不可用';
+          }
+        });
     }
 
     function assignDispatchMessage_(view) {

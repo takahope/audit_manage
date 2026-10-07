@@ -488,6 +488,34 @@
     .btn-status-note { border: 1px solid var(--color-border); color: #8e5e31; }
     .status-note-icon { cursor: help; margin-left: 4px; font-size: 0.9em; }
 
+    /* 調派摘要標籤按鈕 */
+    .dispatch-badge {
+      display: inline-block;
+      margin-top: var(--space-2);
+      padding: 3px var(--space-2);
+      font-family: var(--font-body);
+      font-size: 12px;
+      line-height: 1.4;
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      background: #f8fafc;
+      color: var(--color-text);
+      cursor: pointer;
+      text-align: left;
+      width: fit-content;
+      max-width: 100%;
+      word-break: break-all;
+    }
+    .dispatch-badge:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      background: #f1f5f9;
+    }
+    .dispatch-badge:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 1px;
+    }
+
     /* 週期設定（僅固定模式顯示） */
     .cycle-settings {
       font-family: var(--font-body); font-size: 13px;
@@ -644,6 +672,29 @@
     }
     .cert-diff-chip.add { color: var(--color-accent); }
     .cert-diff-chip.remove { color: var(--color-danger); border-style: dashed; }
+
+    /* ===== 駐站調派詳情 Modal ===== */
+    .dispatch-detail-section { margin-bottom: var(--space-3); }
+    .dispatch-detail-section h4 {
+      margin: var(--space-2) 0 var(--space-1);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-text);
+    }
+    .dispatch-detail-list, .dispatch-members-list {
+      margin: var(--space-1) 0 var(--space-2);
+      padding-left: var(--space-4);
+    }
+    .dispatch-detail-list li, .dispatch-members-list li {
+      font-size: 13px;
+      line-height: 1.5;
+      margin-bottom: var(--space-2);
+    }
+    .dispatch-empty-hint {
+      font-size: 13px;
+      color: var(--color-muted);
+      margin: var(--space-1) 0 var(--space-2);
+    }
 
     /* ===== Toast / Loading / 空狀態 ===== */
     .toast {
@@ -1005,6 +1056,17 @@
     </div>
   </div>
 
+  <!-- 調派詳情 Modal -->
+  <div class="modal-overlay" id="dispatch-detail-overlay">
+    <div class="modal modal-wide">
+      <div class="modal-header" id="dispatch-detail-title">駐站調派詳情</div>
+      <div class="modal-body" id="dispatch-detail-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="dispatch-detail-close">關閉</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <!-- 初次載入：白底遮罩當背景，進度卡片（#progress-overlay）疊在其上呈現進度條 -->
@@ -1089,6 +1151,69 @@
       if (!getDispatchSnapshotForDate_(date)) ensureDispatchSnapshot_(year, false)
         .then(function () { if (selectedDispatchDate === date) { renderSections(); updateDispatchMeta_(); } })
         .catch(function () { if (selectedDispatchDate === date) { renderSections(); updateDispatchMeta_(); } });
+    }
+
+    function getStationDispatchView_(stationCode, date) {
+      const snapshot = getDispatchSnapshotForDate_(date);
+      if (!snapshot) return { state: 'loading', pending: [], incoming: [], outgoing: [], other: [] };
+      const view = { state: snapshot.state, pending: [], incoming: [], outgoing: [], other: [] };
+      (snapshot.dispatches || []).forEach(function (record) {
+        if (record.startDate > date || record.endDate < date) return;
+        if (record.stationCode === stationCode) {
+          if (record.isPending) view.pending.push(record);
+          else if (record.isTemporary) view.incoming.push(record);
+          else view.other.push(record);
+        } else if (!record.isPending && record.originalStationCode === stationCode) view.outgoing.push(record);
+      });
+      return view;
+    }
+
+    function countDispatchPeople_(records) {
+      const keys = new Set();
+      records.forEach(function (record) { keys.add(String(record.nurseEmail || record.id).trim().toLowerCase()); });
+      return keys.size;
+    }
+
+    function dispatchPrimary_(view) {
+      const pendingCount = view.pending.reduce(function (sum, record) { return sum + (Number(record.demandCount) || 0); }, 0);
+      if (pendingCount) return '⚠ 待指派需求 ' + pendingCount + ' 名';
+      if (view.incoming.length) return '跨站調入 ' + countDispatchPeople_(view.incoming) + ' 人';
+      if (view.outgoing.length) return '本站調出 ' + countDispatchPeople_(view.outgoing) + ' 人';
+      if (view.other.length) return '其他排班 ' + view.other.length + ' 筆';
+      return view.state === 'ready' ? '無已登錄調派' :
+        view.state === 'partial' ? '資料未完整' :
+        view.state === 'notConfigured' ? '未啟用' :
+        view.state === 'unavailable' ? '資料暫不可用' : '載入中';
+    }
+
+    function formatDispatchTime_(record) {
+      if (record.startTime && record.endTime) return record.startTime + ' ~ ' + record.endTime;
+      if (record.startTime) return record.startTime + ' 起';
+      return (record.shiftName || '班別未填') + (record.hours ? ' (' + record.hours + 'h)' : '');
+    }
+
+    function renderDispatchBadge_(station) {
+      const view = getStationDispatchView_(station.code, selectedDispatchDate);
+      const total = view.pending.length + view.incoming.length + view.outgoing.length + view.other.length;
+      const extra = total > 1 ? ' · 另 ' + (total - 1) + ' 筆' : '';
+      const incomplete = view.state === 'partial' && total > 0 ? ' · 資料未完整' : '';
+      return '<button type="button" class="dispatch-badge" data-action="dispatch-detail" data-code="' +
+        escapeHtml(station.code) + '">' + escapeHtml(dispatchPrimary_(view) + extra + incomplete) + '</button>';
+    }
+
+    function stationForDispatch_(code) {
+      if (!dashboard) return null;
+      return dashboard.certifiedStations.concat(dashboard.normalStations, dashboard.outsourcedStations || [])
+        .find(function (station) { return station.code === code; });
+    }
+
+    function dispatchDetailItemHtml_(record) {
+      const nurse = record.isPending ? '待指派 ' + record.demandCount + ' 名' : (record.nurseName || '未具名');
+      return '<li><strong>' + escapeHtml(nurse) + '</strong> · ' + escapeHtml(record.startDate) +
+        '～' + escapeHtml(record.endDate) + ' · ' + escapeHtml(formatDispatchTime_(record)) +
+        (record.nurseEmail ? '<br>' + escapeHtml(record.nurseEmail) : '') +
+        '<br>' + escapeHtml(record.originalStationCode) + ' → ' + escapeHtml(record.stationCode) +
+        (record.note ? '<br>' + escapeHtml(record.note) : '') + '</li>';
     }
 
     const MODE_LABELS = {
@@ -1893,6 +2018,8 @@
               }).join('')) + '</ul>'
         : '';
 
+      const dispatchBadgeHtml = renderDispatchBadge_(station);
+
       return (
         '<div class="' + cardClasses.join(' ') + '" data-code="' + escapeHtml(station.code) + '">' +
           '<div class="card-top">' +
@@ -1912,6 +2039,7 @@
             '<span class="badge ' + badge.cls + '">' + badge.label + '</span>' +
           '</div>' +
           dueLine +
+          dispatchBadgeHtml +
           assignmentHtml +
           '<button class="members-toggle" data-action="toggle-members" data-code="' + escapeHtml(station.code) + '">' +
             (expanded ? '收合成員名單' : '成員 ' + station.members.length + ' 人') + '</button>' +
@@ -1947,6 +2075,8 @@
           });
         } else if (action === 'assign') {
           el.addEventListener('click', function () { openAssignModal(code); });
+        } else if (action === 'dispatch-detail') {
+          el.addEventListener('click', function () { openDispatchDetail_(code); });
         } else if (action === 'backfill') {
           el.addEventListener('click', function () { openBackfillModal(code); });
         } else if (action === 'status-note') {
@@ -2971,6 +3101,78 @@
       runWriteReload(PROGRESS_MESSAGES.global, callServer('saveCertifiedStations', codes));
     }
 
+    // =============================================
+    // 駐站調派詳情 Modal
+    // =============================================
+    function openDispatchDetail_(code) {
+      const station = stationForDispatch_(code);
+      if (!station) return;
+      const overlay = document.getElementById('dispatch-detail-overlay');
+      if (!overlay) return;
+
+      const view = getStationDispatchView_(code, selectedDispatchDate);
+
+      const titleEl = document.getElementById('dispatch-detail-title');
+      if (titleEl) {
+        titleEl.textContent = '駐站調派詳情 — ' + (station.name || station.code);
+      }
+
+      const renderGroup = function (title, records, emptyText) {
+        let content = '';
+        if (records.length > 0) {
+          content = '<ul class="dispatch-detail-list">' + records.map(dispatchDetailItemHtml_).join('') + '</ul>';
+        } else {
+          content = '<p class="dispatch-empty-hint">' + escapeHtml(emptyText) + '</p>';
+        }
+        return '<div class="dispatch-detail-section">' +
+          '<h4>' + escapeHtml(title) + '（' + records.length + ' 筆）</h4>' +
+          content +
+        '</div>';
+      };
+
+      const membersContent = (station.members && station.members.length > 0)
+        ? '<ul class="dispatch-members-list">' + station.members.map(function (m) {
+            return '<li><strong>' + escapeHtml(m.name) + '</strong>' +
+              (m.title ? ' <span class="title">' + escapeHtml(m.title) + '</span>' : '') +
+              (m.email ? ' · ' + escapeHtml(m.email) : '') + '</li>';
+          }).join('') + '</ul>'
+        : '<p class="dispatch-empty-hint">此駐站在人員職務配置中沒有成員資料</p>';
+
+      const bodyEl = document.getElementById('dispatch-detail-body');
+      if (bodyEl) {
+        bodyEl.innerHTML =
+          '<div class="dispatch-detail-date-hint" style="color:var(--color-muted);margin-bottom:var(--space-2);font-size:13px;">' +
+            '查詢日期：<span class="mono">' + escapeHtml(selectedDispatchDate) + '</span>' +
+          '</div>' +
+          renderGroup('待指派需求', view.pending, '無待指派需求') +
+          renderGroup('調入本站', view.incoming, '無跨站調入紀錄') +
+          renderGroup('自本站調出', view.outgoing, '無自本站調出紀錄') +
+          renderGroup('本站其他排班', view.other, '無本站其他排班紀錄') +
+          '<div class="dispatch-detail-section">' +
+            '<h4>編制名單（供對照）（' + ((station.members && station.members.length) || 0) + ' 人）</h4>' +
+            membersContent +
+          '</div>';
+      }
+
+      overlay.classList.add('open');
+    }
+
+    function closeDispatchDetail_() {
+      const overlay = document.getElementById('dispatch-detail-overlay');
+      if (overlay) overlay.classList.remove('open');
+    }
+
+    const dispatchDetailCloseBtn = document.getElementById('dispatch-detail-close');
+    if (dispatchDetailCloseBtn) {
+      dispatchDetailCloseBtn.addEventListener('click', closeDispatchDetail_);
+    }
+    const dispatchDetailOverlayEl = document.getElementById('dispatch-detail-overlay');
+    if (dispatchDetailOverlayEl) {
+      dispatchDetailOverlayEl.addEventListener('click', function (e) {
+        if (e.target === this) closeDispatchDetail_();
+      });
+    }
+
     function confirmCancelAssignment(stationCode) {
       const station = allStations().find(s => s.code === stationCode);
       openModal({
@@ -3177,10 +3379,22 @@
         'addTriggerEvent', 'deleteTriggerEvent', 'setCycleMode', 'setCycleStartYear', 'importAuditRecords',
         'saveCertifiedStations'];
       const mockDispatches_ = [
+        { id: 'mock-pending', stationCode: 'GRP-CO-A01', originalStationCode: 'GRP-CO-A01',
+          startDate: '2026-10-07', endDate: '2026-10-07', nurseName: '', nurseEmail: '',
+          startTime: '09:00', endTime: '18:00', shiftName: '正常班', hours: 8, note: '支援人力需求', demandCount: 2,
+          isPending: true, isTemporary: false },
         { id: 'mock-in', stationCode: 'GRP-CO-A01', originalStationCode: 'GRP-CO-B01',
           startDate: '2026-10-07', endDate: '2026-10-07', nurseName: '王護理師', nurseEmail: 'nurse@example.com',
-          startTime: '08:30', endTime: '17:30', shiftName: '正常班', hours: 8, note: '', demandCount: 1,
+          startTime: '08:30', endTime: '17:30', shiftName: '正常班', hours: 8, note: '跨站支援門診', demandCount: 1,
           isPending: false, isTemporary: true },
+        { id: 'mock-out', stationCode: 'GRP-CO-A02', originalStationCode: 'GRP-CO-A01',
+          startDate: '2026-10-07', endDate: '2026-10-07', nurseName: '陳護理師', nurseEmail: 'chen@example.com',
+          startTime: '08:00', endTime: '', shiftName: '早班', hours: 8, note: '外調板橋支援', demandCount: 1,
+          isPending: false, isTemporary: true },
+        { id: 'mock-other', stationCode: 'GRP-CO-A01', originalStationCode: 'GRP-CO-A01',
+          startDate: '2026-10-07', endDate: '2026-10-07', nurseName: '林護理師', nurseEmail: 'lin@example.com',
+          startTime: '', endTime: '', shiftName: '正常班', hours: 8, note: '常態排班', demandCount: 1,
+          isPending: false, isTemporary: false },
         { id: 'mock-cross', stationCode: 'GRP-CO-A02', originalStationCode: 'GRP-CO-B01',
           startDate: '2026-12-30', endDate: '2027-01-03', nurseName: '李護理師', nurseEmail: 'lee@example.com',
           startTime: '', endTime: '', shiftName: '正常班', hours: 8, note: '', demandCount: 1,

@@ -537,6 +537,12 @@
       color: var(--color-primary); text-decoration: underline;
       margin-top: var(--space-2); padding: 0;
     }
+    .staffing-summary { margin-top: var(--space-3); font-size: 13px; line-height: 1.5; }
+    .staffing-summary .staffing-detail { color: var(--color-muted); }
+    .staffing-summary .staffing-note { color: var(--color-danger); }
+    .staffing-coverage { margin-top: var(--space-2); padding: var(--space-2); background: #f8fafc; border-left: 3px solid var(--color-accent); font-size: 12px; }
+    .staffing-coverage ul { margin: var(--space-1) 0 0; padding-left: var(--space-3); }
+    .staffing-coverage li { margin: 2px 0; }
     .members-list { margin-top: var(--space-2); border-top: 1px dashed var(--color-border); padding-top: var(--space-2); }
     .members-list li {
       list-style: none; font-size: 13px;
@@ -1188,6 +1194,89 @@
       const keys = new Set();
       records.forEach(function (record) { keys.add(String(record.nurseEmail || record.id).trim().toLowerCase()); });
       return keys.size;
+    }
+
+    function getStationStaffing_(station, date) {
+      const normalKeys = new Set();
+      (station.members || []).forEach(function (member, index) {
+        if (member.title !== '收案人員') return;
+        const email = String(member.email || '').trim().toLowerCase();
+        const name = String(member.name || '').trim();
+        normalKeys.add(email ? 'email:' + email : name ? 'name:' + name : 'row:' + index);
+      });
+      const normal = normalKeys.size;
+      const view = getStationDispatchView_(station.code, date);
+      if (view.state !== 'ready') return { normal: normal, planned: null, actual: null, state: view.state };
+      const pending = view.pending.reduce(function (sum, record) { return sum + (Number(record.demandCount) || 1); }, 0);
+      const hasPerson = function (record) { return Boolean(String(record.nurseEmail || record.nurseName || '').trim()); };
+      if (view.incoming.some(function (record) { return !hasPerson(record); }) ||
+          view.outgoing.some(function (record) { return !hasPerson(record); })) {
+        return { normal: normal, planned: normal + pending, actual: null, state: 'unidentified' };
+      }
+      const actual = normal + countDispatchPeople_(view.incoming.filter(hasPerson)) - countDispatchPeople_(view.outgoing.filter(hasPerson));
+      return { normal: normal, planned: normal + pending, actual: actual < 0 ? null : actual,
+        state: actual < 0 ? 'inconsistent' : 'ready' };
+    }
+
+    function nextDispatchDate_(date) {
+      const day = new Date(date + 'T00:00:00Z');
+      day.setUTCDate(day.getUTCDate() + 1);
+      return day.toISOString().slice(0, 10);
+    }
+
+    function previousDispatchDate_(date) {
+      const day = new Date(date + 'T00:00:00Z');
+      day.setUTCDate(day.getUTCDate() - 1);
+      return day.toISOString().slice(0, 10);
+    }
+
+    function getZeroStaffCoverage_(stationCode, year) {
+      const snapshot = dispatchSnapshotsByYear.get(year);
+      if (!snapshot) return { state: 'loading', intervals: [] };
+      const yearStart = year + '-01-01';
+      const yearEnd = year + '-12-31';
+      const sourceRecords = (snapshot.dispatches || []).filter(function (record) {
+        return record.stationCode === stationCode && record.startDate <= yearEnd && record.endDate >= yearStart;
+      });
+      const hasUnidentified = sourceRecords.some(function (record) {
+        return !record.isPending && !String(record.nurseName || record.nurseEmail || '').trim();
+      });
+      const records = sourceRecords.filter(function (record) {
+        return record.isPending || String(record.nurseName || record.nurseEmail || '').trim();
+      }).map(function (record) {
+        return { record: record, startDate: record.startDate < yearStart ? yearStart : record.startDate,
+          endDate: record.endDate > yearEnd ? yearEnd : record.endDate };
+      });
+      const boundaries = new Set();
+      records.forEach(function (item) {
+        boundaries.add(item.startDate);
+        boundaries.add(nextDispatchDate_(item.endDate));
+      });
+      const dates = Array.from(boundaries).sort();
+      const intervals = [];
+      for (let i = 0; i < dates.length - 1; i++) {
+        const startDate = dates[i];
+        const endDate = previousDispatchDate_(dates[i + 1]);
+        const active = records.filter(function (item) { return item.startDate <= startDate && item.endDate >= startDate; })
+          .map(function (item) { return item.record; });
+        const assigned = active.filter(function (record) { return !record.isPending; });
+        const pending = assigned.length ? [] : active.filter(function (record) { return record.isPending; });
+        if (!assigned.length && !pending.length) continue;
+        const selected = assigned.length ? assigned : pending;
+        const kind = assigned.length ? 'assigned' : 'pending';
+        const count = assigned.length ? countDispatchPeople_(assigned) :
+          pending.reduce(function (sum, record) { return sum + (Number(record.demandCount) || 1); }, 0);
+        const times = Array.from(new Set(selected.map(formatDispatchTime_).filter(function (time) { return time !== '班別未填'; })));
+        const time = times.length === 1 ? times[0] :
+          times.length > 1 ? '多時段，詳見調派詳情' : '';
+        const last = intervals[intervals.length - 1];
+        if (last && last.kind === kind && last.count === count && last.time === time && nextDispatchDate_(last.endDate) === startDate) {
+          last.endDate = endDate;
+        } else {
+          intervals.push({ kind: kind, startDate: startDate, endDate: endDate, count: count, time: time });
+        }
+      }
+      return { state: snapshot.state === 'ready' && hasUnidentified ? 'unidentified' : snapshot.state, intervals: intervals };
     }
 
     function dispatchPrimary_(view) {
@@ -2041,6 +2130,42 @@
         : '';
 
       const dispatchBadgeHtml = renderDispatchBadge_(station);
+      const staffing = getStationStaffing_(station, selectedDispatchDate);
+      const staffingState = staffing.state === 'ready' ? '' :
+        staffing.state === 'partial' ? '資料未完整' :
+        staffing.state === 'loading' ? '調派資料載入中' :
+        staffing.state === 'notConfigured' ? '調派資料未啟用' :
+        staffing.state === 'unidentified' ? '有未具名調派紀錄，實際人數無法確認' :
+        staffing.state === 'inconsistent' ? '調出人數超過可推算人力，請核對資料' : '調派資料暫不可用';
+      const staffingStale = dispatchRefreshFailuresByYear.has(Number(selectedDispatchDate.slice(0, 4)));
+      const staffingHtml = '<div class="staffing-summary" title="實際人數依已登錄調派推算，並非到勤確認">' +
+        '<strong>常態收案人員 ' + staffing.normal + ' 人</strong>' +
+        ' <span class="staffing-detail">（預計收案人數 ' + (staffing.planned === null ? '—' : staffing.planned + ' 人') +
+        '、實際收案人數 ' + (staffing.actual === null ? '—' : staffing.actual + ' 人') + '）</span>' +
+        (staffingState || staffingStale ? '<div class="staffing-note">' + escapeHtml([staffingState, staffingStale ? '舊資料' : ''].filter(Boolean).join('；')) + '</div>' : '') +
+        '</div>';
+      let coverageHtml = '';
+      if (staffing.normal === 0) {
+        const coverage = getZeroStaffCoverage_(station.code, Number(selectedDispatchDate.slice(0, 4)));
+        const rangeText = function (item) {
+          const start = item.startDate.slice(5).replace('-', '/');
+          const end = item.endDate.slice(5).replace('-', '/');
+          return (start === end ? start : start + '–' + end) + ' ' +
+            (item.kind === 'assigned' ? '已指派 ' : '預計指派 ') + item.count + ' 人' +
+            (item.time ? '（' + item.time + '）' : '');
+        };
+        coverageHtml = '<div class="staffing-coverage"><strong>' + escapeHtml(String(selectedDispatchDate.slice(0, 4))) + ' 年人力安排區間</strong>' +
+          (coverage.intervals.length ? '<ul>' + coverage.intervals.map(function (item) {
+            return '<li>' + escapeHtml(rangeText(item)) + '</li>';
+          }).join('') + '</ul>' :
+            coverage.state === 'ready' ? '<div>尚無已登錄或待指派人力資訊</div>' : '') +
+          (coverage.state !== 'ready' ? '<div class="staffing-note">' + escapeHtml(
+              coverage.state === 'partial' ? '區間資料未完整' :
+              coverage.state === 'loading' ? '區間資料載入中' :
+              coverage.state === 'notConfigured' ? '調派資料未啟用' :
+                coverage.state === 'unidentified' ? '有未具名調派紀錄，區間無法完整確認' : '區間資料暫不可用') + '</div>' : '') +
+          (staffingStale ? '<div class="staffing-note">重新整理失敗，顯示舊資料</div>' : '') + '</div>';
+      }
 
       return (
         '<div class="' + cardClasses.join(' ') + '" data-code="' + escapeHtml(station.code) + '">' +
@@ -2063,8 +2188,10 @@
           dueLine +
           dispatchBadgeHtml +
           assignmentHtml +
+          staffingHtml +
+          coverageHtml +
           '<button class="members-toggle" data-action="toggle-members" data-code="' + escapeHtml(station.code) + '">' +
-            (expanded ? '收合成員名單' : '成員 ' + station.members.length + ' 人') + '</button>' +
+            (expanded ? '收合人員職務配置' : '查看人員職務配置（' + station.members.length + ' 筆）') + '</button>' +
           membersHtml +
         '</div>'
       );
@@ -3407,14 +3534,14 @@
         ],
       });
       const stations = [
-        { code: 'GRP-CO-A01', name: '台北車站駐站', managerName: '王主任', isCertified: true,  certifiedSince: 2024, certifiedTenures: [{ since: 2024, until: null }], members: [{ name: '陳一', title: '駐站人員' }, { name: '林二', title: '駐站人員' }] },
-        { code: 'GRP-CO-A02', name: '板橋駐站',     managerName: '李主任', isCertified: true,  certifiedSince: 2024, certifiedTenures: [{ since: 2024, until: null }], members: [{ name: '張三', title: '駐站人員' }] },
+        { code: 'GRP-CO-A01', name: '台北車站駐站', managerName: '王主任', isCertified: true,  certifiedSince: 2024, certifiedTenures: [{ since: 2024, until: null }], members: [{ name: '陳一', title: '收案人員' }, { name: '林二', title: '收案人員' }] },
+        { code: 'GRP-CO-A02', name: '板橋駐站',     managerName: '李主任', isCertified: true,  certifiedSince: 2024, certifiedTenures: [{ since: 2024, until: null }], members: [{ name: '張三', title: '收案人員' }] },
         { code: 'GRP-CO-A03', name: '桃園駐站',     managerName: '吳主任', isCertified: true,  certifiedSince: 2027, certifiedTenures: [{ since: 2027, until: null }], members: [] },
-        { code: 'GRP-CO-B01', name: '新竹駐站',     managerName: '劉組長', isCertified: false, members: [{ name: '黃四', title: '駐站人員' }] },
-        { code: 'GRP-CO-B02', name: '台中駐站',     managerName: '蔡組長', isCertified: false, members: [{ name: '許五', title: '駐站人員' }, { name: '鄭六', title: '駐站人員' }] },
+        { code: 'GRP-CO-B01', name: '新竹駐站',     managerName: '劉組長', isCertified: false, members: [{ name: '黃四', title: '收案人員' }] },
+        { code: 'GRP-CO-B02', name: '台中駐站',     managerName: '蔡組長', isCertified: false, members: [{ name: '許五', title: '收案人員' }, { name: '鄭六', title: '收案人員' }] },
         { code: 'GRP-CO-B03', name: '嘉義駐站',     managerName: '楊組長', isCertified: false, members: [] },
-        { code: 'GRP-CO-B04', name: '台南駐站',     managerName: '謝組長', isCertified: false, members: [{ name: '周七', title: '駐站人員' }] },
-        { code: 'GRP-CO-B05', name: '高雄駐站',     managerName: '洪組長', isCertified: false, members: [{ name: '葉八', title: '駐站人員' }] },
+        { code: 'GRP-CO-B04', name: '台南駐站',     managerName: '謝組長', isCertified: false, members: [{ name: '周七', title: '收案人員' }] },
+        { code: 'GRP-CO-B05', name: '高雄駐站',     managerName: '洪組長', isCertified: false, members: [{ name: '葉八', title: '收案人員' }] },
         { code: 'GRP-CO-EX-01', name: '測試委外駐站', managerName: '測試', isCertified: false, isOutsourced: true, members: [] },
       ];
       // 認證名單以 state.certifiedCodes 為可變真相（供「認證駐站管理」預覽改名單後重新分類）

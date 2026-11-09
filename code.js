@@ -380,7 +380,9 @@ function resolveActor_() {
  * 整理單一駐站的稽核紀錄視圖：倒序清單＋「上次稽核」顯示文字。
  * 早期紀錄只有年度（稽核日期欄空），顯示退回「YYYY 年」。
  *
- * @param {Array<{year, auditDate, recorder, note}>} stationRecords
+ * recorder＝登錄人；auditorNames/auditorEmails＝稽核人員（空＝未記載），兩者概念不同。
+ *
+ * @param {Array<{year, auditDate, recorder, note, auditorNames, auditorEmails}>} stationRecords
  * @returns {{auditRecords: Array, lastAuditDisplay: string}}
  */
 function buildStationAuditView_(stationRecords) {
@@ -390,7 +392,14 @@ function buildStationAuditView_(stationRecords) {
   });
   const latest = sorted[0] || null;
   return {
-    auditRecords: sorted.map(r => ({ year: r.year, auditDate: r.auditDate || '', recorder: r.recorder || '', note: r.note || '' })),
+    auditRecords: sorted.map(r => ({
+      year: r.year,
+      auditDate: r.auditDate || '',
+      recorder: r.recorder || '',
+      note: r.note || '',
+      auditorNames: r.auditorNames || '',
+      auditorEmails: r.auditorEmails || '',
+    })),
     lastAuditDisplay: latest ? (latest.auditDate || latest.year + ' 年') : '',
   };
 }
@@ -946,9 +955,12 @@ function calendarSyncSuffix_(warnings) {
  * @param {number} year - 稽核年度（西元）
  * @param {string} [auditDateText] - 實際稽核日期 yyyy/MM/dd（補登時由前端帶入；
  *   省略且 year 為今年時自動填當天，使「上次稽核」可顯示年月日）
+ * @param {string[]} [auditorEmails] - 稽核人員（實際執行稽核的人，整批共用）。
+ *   當年度必填、過去年度選填；只能是現行稽核人員名單內的人。
+ *   登錄人（按下登錄的操作者）由系統另行記錄，與此無關。
  * @returns {string} JSON 回應
  */
-function recordAudits(stationCodes, year, auditDateText) {
+function recordAudits(stationCodes, year, auditDateText, auditorEmails) {
   try {
     requireAuditor_();
     if (!Array.isArray(stationCodes) || stationCodes.length === 0) {
@@ -958,6 +970,8 @@ function recordAudits(stationCodes, year, auditDateText) {
     if (!isValidAuditYear_(auditYear)) {
       return errorResponse_('稽核年度 ' + year + ' 超出可登錄範圍，請確認年度後重試');
     }
+    const auditors = resolveRecordAuditors_(auditYear, auditorEmails, []);
+    const auditorFields = buildAuditorFields_(auditors);
 
     // 稽核日期：明確帶入時須與年度一致；未帶入且登錄今年時自動填當天
     let auditDate = String(auditDateText || '').trim();
@@ -987,6 +1001,8 @@ function recordAudits(stationCodes, year, auditDateText) {
       year: auditYear,
       auditDate: auditDate,
       note: '',
+      auditorNames: auditorFields.auditorNames,
+      auditorEmails: auditorFields.auditorEmails,
     }));
 
     const result = appendAuditRecords(entries, Session.getActiveUser().getEmail() || '');
@@ -1015,6 +1031,71 @@ function recordAudits(stationCodes, year, auditDateText) {
       message: result.skipped.length > 0
         ? '已登錄 ' + result.added + ' 間；' + result.skipped.length + ' 間於 ' + auditYear + ' 年已有紀錄，自動略過'
         : '已登錄 ' + result.added + ' 間駐站為 ' + auditYear + ' 年已稽核',
+      stations: delta.stations,
+      summary: delta.summary,
+    });
+  } catch (error) {
+    return errorResponse_(error.message);
+  }
+}
+
+/**
+ * 解析並檢核稽核人員（登錄與補記共用）：
+ * 只能選現行稽核人員名單內的人；補記時另允許保留該紀錄「原本已記載」者（含已離開名單的）；
+ * 當年度必填、過去年度可留空。
+ *
+ * @param {number} year - 紀錄年度
+ * @param {string[]} auditorEmails
+ * @param {Array<{name, email}>} carriedOver - 該紀錄原本已記載的稽核人員（新登錄傳空陣列）
+ * @returns {Array<{name, email}>}
+ * @throws {Error} 不在名單或當年度未記載時拋錯（由各 API 的 try/catch 轉成 errorResponse_）
+ */
+function resolveRecordAuditors_(year, auditorEmails, carriedOver) {
+  const currentYear = Number(Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy'));
+  const resolved = resolveAuditorSelection_(auditorEmails, getAuditors(), carriedOver);
+  if (resolved.unknownEmails.length > 0) {
+    throw new Error('「' + resolved.unknownEmails[0] + '」不在稽核人員名單中，請重新整理後再試');
+  }
+  const requirementError = checkAuditorRequirement_(year, currentYear, resolved.auditors);
+  if (requirementError) throw new Error(requirementError);
+  return resolved.auditors;
+}
+
+/**
+ * 補記／更正某駐站某年度稽核紀錄的稽核人員。
+ * 任何一筆都能改；只動稽核人員欄，登錄人、登錄時間、稽核日期不變，也不另記修改人。
+ * 當年度紀錄不可清空；過去年度可清空（改回「未記載」）。
+ *
+ * @param {string} stationCode
+ * @param {number} year
+ * @param {string[]} auditorEmails
+ * @returns {string} JSON 回應
+ */
+function updateAuditRecordAuditors(stationCode, year, auditorEmails) {
+  try {
+    requireAuditor_();
+    const auditYear = Number(year);
+    if (!isValidAuditYear_(auditYear)) {
+      return errorResponse_('稽核年度 ' + year + ' 超出可登錄範圍，請確認年度後重試');
+    }
+    const code = String(stationCode || '').trim();
+    const record = getAuditRecords().find(r => r.stationCode === code && r.year === auditYear);
+    if (!record) {
+      return errorResponse_('找不到 ' + code + ' 於 ' + auditYear + ' 年的稽核紀錄，可能已被刪除');
+    }
+
+    const carriedOver = parseStoredAuditors_(record.auditorNames, record.auditorEmails);
+    const auditors = resolveRecordAuditors_(auditYear, auditorEmails, carriedOver);
+    const fields = buildAuditorFields_(auditors);
+    if (!setAuditRecordAuditors(code, auditYear, fields.auditorNames, fields.auditorEmails)) {
+      return errorResponse_('找不到 ' + code + ' 於 ' + auditYear + ' 年的稽核紀錄，可能已被刪除');
+    }
+
+    const delta = stationDeltaFor_([code]);
+    return successResponse_({
+      message: auditors.length > 0
+        ? '已更新 ' + (record.stationName || code) + ' ' + auditYear + ' 年的稽核人員：' + fields.auditorNames
+        : '已清除 ' + (record.stationName || code) + ' ' + auditYear + ' 年的稽核人員，改為「未記載」',
       stations: delta.stations,
       summary: delta.summary,
     });
@@ -1192,6 +1273,9 @@ function getExportView_(scope) {
         year: Number(r.year),
         auditDate: r.auditDate || '',
         note: r.note || '',
+        // 稽核人員照檔案原樣寫入，不比對現行名單（匯出檔可能含已離職者）、不套用當年度必填
+        auditorNames: r.auditorNames || '',
+        auditorEmails: r.auditorEmails || '',
       }));
       return appendAuditRecords(entries, Session.getActiveUser().getEmail() || '').added;
     },

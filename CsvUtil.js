@@ -9,12 +9,19 @@
 /**
  * 匯出欄位定義：header 為 CSV 表頭、key 為紀錄物件屬性。
  * 匯入時以 header 比對檔案表頭，再用 key 還原為紀錄物件。
+ * optional: true 的欄位在匯入檔缺少時不算缺漏（值回空字串），用於後來新增的欄位，
+ * 讓舊版匯出的檔案仍能匯入。
+ *
+ * 「稽核人員」＝實際執行稽核的人（姓名頓號分隔、Email 逗號分隔）；
+ * 「登錄人」＝按下登錄的操作者。兩者不同，見 GLOSSARY.md。
  */
 const STATION_CSV_COLUMNS = [
   { header: '駐站代碼', key: 'stationCode' },
   { header: '駐站名稱', key: 'stationName' },
   { header: '稽核年度', key: 'year' },
   { header: '稽核日期', key: 'auditDate' },
+  { header: '稽核人員', key: 'auditorNames', optional: true },
+  { header: '稽核人員Email', key: 'auditorEmails', optional: true },
   { header: '登錄人', key: 'recorder' },
   { header: '備註', key: 'note' },
 ];
@@ -99,20 +106,26 @@ function parseCsv(text) {
 /**
  * 將解析後的 CSV 列（含表頭）轉為紀錄物件，依欄位定義對應。
  * 表頭順序不需與定義相同——以 header 名稱定位欄位索引，缺欄回空字串。
+ * optional 欄位缺少時不列入 missingHeaders。
  *
  * @param {Array<Array<string>>} rows - parseCsv 結果（首列為表頭）
- * @param {Array<{header, key}>} columns
+ * @param {Array<{header, key, optional}>} columns
  * @returns {{records: Array<Object>, missingHeaders: string[]}}
  */
 function rowsToRecords(rows, columns) {
-  if (!rows || rows.length === 0) return { records: [], missingHeaders: columns.map(c => c.header) };
+  if (!rows || rows.length === 0) {
+    return { records: [], missingHeaders: columns.filter(c => !c.optional).map(c => c.header) };
+  }
   const headerRow = rows[0].map(h => String(h).trim());
   const indexByKey = {};
   const missingHeaders = [];
   columns.forEach(function (col) {
     const idx = headerRow.indexOf(col.header);
-    if (idx === -1) missingHeaders.push(col.header);
-    else indexByKey[col.key] = idx;
+    if (idx === -1) {
+      if (!col.optional) missingHeaders.push(col.header);
+    } else {
+      indexByKey[col.key] = idx;
+    }
   });
 
   const records = [];

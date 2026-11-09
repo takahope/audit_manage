@@ -158,6 +158,8 @@ const COL = {
     RECORDED_AT: 4,
     NOTE: 5,
     AUDIT_DATE: 6,     // yyyy/MM/dd；舊資料此欄空 = 僅知年度
+    AUDITOR_NAMES: 7,  // 稽核人員姓名（頓號分隔，登錄當下快照）；空 = 未記載
+    AUDITOR_EMAILS: 8, // 稽核人員信箱（逗號分隔，供反查比對）；空 = 未記載
   },
   PLAN: {
     STATION_CODE: 0,

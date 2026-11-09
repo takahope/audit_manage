@@ -612,7 +612,9 @@ function removeAssignment(stationCode, year) {
 
 /**
  * 取得所有稽核紀錄。
- * @returns {Array<{stationCode, stationName, year, recorder, recordedAt, note}>}
+ * recorder＝登錄人（按下登錄的操作者）；auditorNames/auditorEmails＝稽核人員（實際執行稽核的人），
+ * 兩者不同概念，見 GLOSSARY.md。
+ * @returns {Array<{stationCode, stationName, year, recorder, recordedAt, note, auditDate, auditorNames, auditorEmails}>}
  */
 function getAuditRecords() {
   const rows = getSheetRows_(getAuditSpreadsheet_(), SHEET_NAMES.AUDIT_RECORDS, COL.AUDIT.STATION_CODE);
@@ -625,6 +627,8 @@ function getAuditRecords() {
       recordedAt: row[COL.AUDIT.RECORDED_AT] || '',
       note: row[COL.AUDIT.NOTE] || '',
       auditDate: String(row[COL.AUDIT.AUDIT_DATE] || '').trim(), // 空 = 早期僅知年度的紀錄
+      auditorNames: String(row[COL.AUDIT.AUDITOR_NAMES] || '').trim(),   // 空 = 未記載
+      auditorEmails: String(row[COL.AUDIT.AUDITOR_EMAILS] || '').trim(), // 空 = 未記載
     }))
     .filter(record => !isNaN(record.year) && record.year > 0);
 }
@@ -635,8 +639,9 @@ function getAuditRecords() {
  * 使用 LockService 防止多人同時登錄造成重複列；
  * 去重檢查與寫入必須在同一把鎖內完成，否則檢查結果可能過期。
  *
- * @param {Array<{stationCode, stationName, year, note}>} entries
- * @param {string} recorderEmail
+ * @param {Array<{stationCode, stationName, year, note, auditDate, auditorNames, auditorEmails}>} entries
+ *   auditorNames/auditorEmails 可省略（＝未記載）
+ * @param {string} recorderEmail - 登錄人（按下登錄的操作者，非稽核人員）
  * @returns {{added: number, skipped: string[]}} skipped 為已存在而略過的駐站代碼
  */
 function appendAuditRecords(entries, recorderEmail) {
@@ -666,6 +671,8 @@ function appendAuditRecords(entries, recorderEmail) {
         timestamp,
         entry.note || '',
         entry.auditDate || '', // 空 = 僅知年度
+        entry.auditorNames || '',  // 空 = 未記載
+        entry.auditorEmails || '', // 空 = 未記載
       ]);
     });
 
@@ -675,6 +682,40 @@ function appendAuditRecords(entries, recorderEmail) {
       SpreadsheetApp.flush();
     }
     return { added: newRows.length, skipped: skipped };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * 更新某駐站某年度稽核紀錄的稽核人員（補記／更正）。
+ * 只改稽核人員兩欄；登錄人、登錄時間、稽核日期都不動，也不另記修改人。
+ *
+ * @param {string} stationCode
+ * @param {number} year
+ * @param {string} auditorNames - 頓號分隔；空字串 = 清為未記載
+ * @param {string} auditorEmails - 逗號分隔；空字串 = 清為未記載
+ * @returns {boolean} 是否找到並更新了該筆紀錄
+ */
+function setAuditRecordAuditors(stationCode, year, auditorNames, auditorEmails) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getAuditSpreadsheet_().getSheetByName(SHEET_NAMES.AUDIT_RECORDS);
+    if (!sheet) return false;
+
+    const rows = sheet.getDataRange().getDisplayValues();
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const sameStation = String(rows[i][COL.AUDIT.STATION_CODE]).trim() === String(stationCode).trim();
+      const sameYear = Number(rows[i][COL.AUDIT.YEAR]) === Number(year);
+      if (sameStation && sameYear) {
+        // 兩欄相鄰，一次寫入
+        sheet.getRange(i + 1, COL.AUDIT.AUDITOR_NAMES + 1, 1, 2).setValues([[auditorNames || '', auditorEmails || '']]);
+        SpreadsheetApp.flush();
+        return true;
+      }
+    }
+    return false;
   } finally {
     lock.releaseLock();
   }

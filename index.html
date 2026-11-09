@@ -156,6 +156,17 @@
       font-size: 16px; line-height: 1; padding: 0 var(--space-1); opacity: .55; flex-shrink: 0;
     }
     .hist-del:hover { opacity: 1; }
+    .hist-edit {
+      border: 1px solid var(--color-border); background: none; cursor: pointer; color: var(--color-primary);
+      font-family: var(--font-body); font-size: 12px; line-height: 1.4; padding: 0 var(--space-1);
+      border-radius: 2px; flex-shrink: 0; white-space: nowrap;
+    }
+    .hist-edit:hover { border-color: var(--color-primary); }
+    /* 歷年紀錄的人員行：稽核人員（實際執行的人）與登錄人（按下登錄的人）分開標示 */
+    .hist-who { display: block; font-size: 13px; color: var(--color-muted); }
+    .hist-who .who-label { font-size: 11px; margin-right: var(--space-1); }
+    .hist-who .auditors { color: var(--color-text, inherit); }
+    .hist-who .unrecorded { font-style: italic; }
     .empty-hist { font-size: 14px; color: var(--color-muted); }
 
     .center-meta { font-size: 13px; color: var(--color-muted); margin-top: var(--space-2); }
@@ -284,7 +295,7 @@
       background: var(--color-card);
       padding: var(--space-3);
       display: grid;
-      grid-template-columns: minmax(220px, 1.4fr) minmax(140px, .75fr) minmax(140px, .75fr) minmax(210px, 1fr) auto;
+      grid-template-columns: minmax(220px, 1.4fr) minmax(140px, .75fr) minmax(140px, .75fr) minmax(140px, .75fr) minmax(210px, 1fr) auto;
       gap: var(--space-3);
       align-items: end;
     }
@@ -797,6 +808,7 @@
     body.role-viewer #certified-stations-btn,
     body.role-viewer [data-import],
     body.role-viewer .hist-del,
+    body.role-viewer .hist-edit,
     body.role-viewer #history-backfill,
     body.role-viewer .t-del { display: none !important; }
   </style>
@@ -831,7 +843,7 @@
         <div class="filter-field search">
           <label for="station-search-input">關鍵字搜尋</label>
           <div class="filter-search-wrap">
-            <input class="filter-control" type="search" id="station-search-input" autocomplete="off" placeholder="搜尋駐站名稱、代碼、駐站管理員、稽核狀態、分派資訊、成員…">
+            <input class="filter-control" type="search" id="station-search-input" autocomplete="off" placeholder="搜尋駐站名稱、代碼、駐站管理員、稽核狀態、分派資訊、稽核人員、成員…">
           </div>
         </div>
         <div class="filter-field">
@@ -841,6 +853,10 @@
         <div class="filter-field">
           <label for="station-auditor-filter">被分派稽核員</label>
           <select class="filter-control" id="station-auditor-filter"></select>
+        </div>
+        <div class="filter-field">
+          <label for="station-audited-by-filter">曾稽核過的稽核員</label>
+          <select class="filter-control" id="station-audited-by-filter"></select>
         </div>
         <div class="filter-field dispatch-field" id="station-dispatch-control-group">
           <label for="station-dispatch-date">調派檢視日期</label>
@@ -1014,11 +1030,55 @@
           <input type="date" id="backfill-date">
           <div class="period-hint" id="backfill-hint"></div>
         </div>
+        <div class="form-row">
+          <label id="backfill-auditor-label">稽核人員</label>
+          <div class="auditor-list" id="backfill-auditor-list"></div>
+          <div class="period-hint" id="backfill-auditor-hint"></div>
+        </div>
         <div class="form-error" id="backfill-error"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-cancel" id="backfill-cancel">取消</button>
         <button class="btn btn-confirm" id="backfill-save">登錄完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 補記／更正稽核人員 Modal（歷年稽核紀錄的每一筆都能開；只改稽核人員，不動登錄人與日期） -->
+  <div class="modal-overlay" id="auditor-edit-overlay">
+    <div class="modal">
+      <div class="modal-header" id="auditor-edit-title"></div>
+      <div class="modal-body">
+        <p id="auditor-edit-hint"></p>
+        <div class="form-row">
+          <label id="auditor-edit-label">稽核人員</label>
+          <div class="auditor-list" id="auditor-edit-list"></div>
+        </div>
+        <div class="form-error" id="auditor-edit-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="auditor-edit-cancel">取消</button>
+        <button class="btn btn-confirm" id="auditor-edit-save">儲存稽核人員</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批次登錄完成 Modal：整批共用同一組稽核人員 -->
+  <div class="modal-overlay" id="batch-record-overlay">
+    <div class="modal">
+      <div class="modal-header" id="batch-record-title"></div>
+      <div class="modal-body">
+        <div id="batch-record-stations"></div>
+        <div class="form-row">
+          <label id="batch-record-auditor-label">稽核人員</label>
+          <div class="auditor-list" id="batch-record-auditor-list"></div>
+          <div class="period-hint" id="batch-record-auditor-hint"></div>
+        </div>
+        <div class="form-error" id="batch-record-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="batch-record-cancel">取消</button>
+        <button class="btn btn-confirm" id="batch-record-save">確認登錄</button>
       </div>
     </div>
   </div>
@@ -1100,6 +1160,7 @@
       document.write('<script src="AuditCycle.js?v=' + Date.now() + '"><\/script>');
       document.write('<script src="CenterAudit.js?v=' + Date.now() + '"><\/script>');
       document.write('<script src="CsvUtil.js?v=' + Date.now() + '"><\/script>');
+      document.write('<script src="AuditorTrail.js?v=' + Date.now() + '"><\/script>');
     }
   </script>
   <script>
@@ -1115,7 +1176,8 @@
     const filterState = {
       query: '',
       managerKey: '',
-      auditorKey: '',
+      auditorKey: '',     // 「被分派稽核員」：目前被排定的人
+      auditedByKey: '',   // 「曾稽核過」：歷年紀錄中實際執行稽核的人
     };
 
     const dispatchSnapshotsByYear = new Map();
@@ -1624,7 +1686,7 @@
     }
 
     function hasStationFilters_() {
-      return Boolean(filterState.query || filterState.managerKey || filterState.auditorKey);
+      return Boolean(filterState.query || filterState.managerKey || filterState.auditorKey || filterState.auditedByKey);
     }
 
     function stationManagerKey_(station) {
@@ -1679,6 +1741,49 @@
       return options;
     }
 
+    // ---- 「曾稽核過」：以歷年稽核紀錄的稽核人員（實際執行稽核的人）反查，與「被分派」分開 ----
+    /** 一筆稽核紀錄的稽核人員篩選鍵：有信箱用信箱，只有姓名則退回 'name:姓名'；未記載回空陣列 */
+    function recordAuditorKeys_(record) {
+      const emails = splitList_(record.auditorEmails).map(normalizeSearchText_);
+      if (emails.length > 0) return emails;
+      return splitList_(record.auditorNames).map(function (name) { return 'name:' + name; });
+    }
+
+    function stationAuditedByKeys_(station) {
+      const keys = [];
+      (station.auditRecords || []).forEach(function (record) {
+        recordAuditorKeys_(record).forEach(function (key) {
+          if (keys.indexOf(key) === -1) keys.push(key);
+        });
+      });
+      return keys;
+    }
+
+    function stationAuditedByOptionMap_() {
+      const options = {};
+      const nameByEmail = {};
+      (dashboard.auditors || []).forEach(function (auditor) {
+        const email = normalizeSearchText_(auditor.email);
+        if (email) nameByEmail[email] = auditor.name || auditor.email;
+      });
+      allStations().forEach(function (station) {
+        (station.auditRecords || []).forEach(function (record) {
+          const emails = splitList_(record.auditorEmails).map(normalizeSearchText_);
+          const names = splitList_(record.auditorNames);
+          if (emails.length > 0) {
+            emails.forEach(function (email, index) {
+              // 現行名單優先；已離職者退回紀錄當時記下的姓名（數量對得上才配對）
+              const recorded = names.length === emails.length ? names[index] : '';
+              options[email] = options[email] || nameByEmail[email] || recorded || email;
+            });
+            return;
+          }
+          names.forEach(function (name) { options['name:' + name] = name; });
+        });
+      });
+      return options;
+    }
+
     function statusLabelForSearch_(station) {
       return statusBadge_(station).label;
     }
@@ -1689,7 +1794,8 @@
         return [member.name, member.email, member.title].join(' ');
       }).join(' ');
       const recordText = (station.auditRecords || []).map(function (record) {
-        return [record.year, record.auditDate].join(' ');
+        // 歷年紀錄的稽核人員（實際執行稽核的人）也可被搜尋；登錄人不納入
+        return [record.year, record.auditDate, record.auditorNames, record.auditorEmails].join(' ');
       }).join(' ');
       const certifiedText = station.isCertified
         ? 'ISO 認證 認證駐站 認證自 ' + (station.certifiedSince || '')
@@ -1724,6 +1830,8 @@
           return false;
         }
       }
+
+      if (filterState.auditedByKey && stationAuditedByKeys_(station).indexOf(filterState.auditedByKey) === -1) return false;
 
       if (filterState.query && stationSearchIndex_(station).indexOf(filterState.query) === -1) return false;
       return true;
@@ -1776,6 +1884,18 @@
         : '';
       filterState.auditorKey = auditorSelect.value;
 
+      const auditedBySelect = document.getElementById('station-audited-by-filter');
+      const auditedByOptions = stationAuditedByOptionMap_();
+      const auditedByKeys = Object.keys(auditedByOptions)
+        .sort(function (a, b) { return String(auditedByOptions[a]).localeCompare(String(auditedByOptions[b]), 'zh-Hant'); });
+      auditedBySelect.innerHTML =
+        '<option value="">全部稽核員</option>' +
+        auditedByKeys.map(function (key) {
+          return '<option value="' + escapeHtml(key) + '">' + escapeHtml(auditedByOptions[key]) + '</option>';
+        }).join('');
+      auditedBySelect.value = auditedByKeys.indexOf(filterState.auditedByKey) !== -1 ? filterState.auditedByKey : '';
+      filterState.auditedByKey = auditedBySelect.value;
+
       updateStationFilterMeta_();
     }
 
@@ -1797,6 +1917,7 @@
       filterState.query = '';
       filterState.managerKey = '';
       filterState.auditorKey = '';
+      filterState.auditedByKey = '';
       renderStationFilterControls();
       renderSections();
     }
@@ -1894,6 +2015,10 @@
     });
     document.getElementById('station-auditor-filter').addEventListener('change', function (e) {
       filterState.auditorKey = e.target.value;
+      renderFilteredStationView_();
+    });
+    document.getElementById('station-audited-by-filter').addEventListener('change', function (e) {
+      filterState.auditedByKey = e.target.value;
       renderFilteredStationView_();
     });
     document.getElementById('station-filter-clear').addEventListener('click', clearStationFilters_);
@@ -2826,11 +2951,121 @@
     });
 
     // =============================================
+    // 稽核人員（實際執行稽核的人）：勾選清單與必填規則
+    // 登錄完成、補記、批次登錄三處共用。登錄人（按下登錄的操作者）由系統自動記錄，不在此選。
+    // =============================================
+    /** 當年度（含之後）必填；過去年度補登可留空（常不知道當時是誰） */
+    function auditorRequiredForYear_(year) {
+      return Number(year) >= Number(dashboard.currentYear);
+    }
+
+    /** 駐站今年排定的稽核人員（信箱，小寫） */
+    function planAuditorEmails_(station) {
+      const plan = station && station.assignment;
+      return plan ? splitList_(plan.auditorEmails).map(normalizeSearchText_) : [];
+    }
+
+    /** 所選駐站排定人員「完全相同」才回傳該組人員，否則回空（批次登錄的預設帶入規則） */
+    function commonPlanAuditorEmails_(stations) {
+      if (!stations || stations.length === 0) return [];
+      const sets = stations.map(function (st) { return planAuditorEmails_(st).slice().sort(); });
+      const first = sets[0].join(',');
+      if (!first) return [];
+      return sets.every(function (set) { return set.join(',') === first; }) ? sets[0] : [];
+    }
+
+    /** 一筆紀錄已記載的稽核人員（以信箱為準；姓名與信箱數量對不上則姓名退回信箱） */
+    function recordedAuditorsOf_(record) {
+      const emails = splitList_(record && record.auditorEmails).map(normalizeSearchText_);
+      const names = splitList_(record && record.auditorNames);
+      return emails.map(function (email, index) {
+        return { email: email, name: names.length === emails.length ? names[index] : email };
+      });
+    }
+
+    /**
+     * 畫出稽核人員勾選清單：只列現行名單；carriedOver 為「原紀錄已記載但已不在名單」的人，
+     * 補記時一併列出（否則儲存會默默把已離職者刪掉），可取消勾選移除，但移除後無法再加回。
+     */
+    function renderAuditorChecklist_(listEl, checkedEmails, carriedOver) {
+      const checked = new Set((checkedEmails || []).map(normalizeSearchText_));
+      const roster = dashboard.auditors || [];
+      const inRoster = new Set(roster.map(function (a) { return normalizeSearchText_(a.email); }));
+      const extra = (carriedOver || []).filter(function (a) { return !inRoster.has(normalizeSearchText_(a.email)); });
+      if (roster.length === 0 && extra.length === 0) {
+        listEl.innerHTML = '<label>HR 名單中找不到稽核人員（TF-ISPI-GRP-AUDIT 的稽核員），請先確認人員職務配置。</label>';
+        return;
+      }
+      const row = function (a, note) {
+        const email = normalizeSearchText_(a.email);
+        return '<label><input type="checkbox" value="' + escapeHtml(email) + '"' + (checked.has(email) ? ' checked' : '') + '>' +
+          '<span>' + escapeHtml(a.name) + '</span>' + (note || '') +
+          '<span class="email">' + escapeHtml(a.email) + '</span></label>';
+      };
+      listEl.innerHTML =
+        roster.map(function (a) { return row(a, ''); }).join('') +
+        extra.map(function (a) { return row(a, '<span class="hist-tag">不在現行名單</span>'); }).join('');
+    }
+
+    function checkedAuditorEmails_(listEl) {
+      return Array.prototype.slice.call(listEl.querySelectorAll('input:checked')).map(function (el) { return el.value; });
+    }
+
+    // ---- 補記／更正稽核人員（歷年稽核紀錄每一筆都能開；只改稽核人員欄）----
+    let auditorEditTarget = null; // { code, year, carriedOver }
+
+    function openAuditorEditModal(stationCode, year) {
+      const station = allStations().find(function (s) { return s.code === stationCode; });
+      const record = station && station.auditRecords.find(function (r) { return r.year === year; });
+      if (!record) return;
+      const carriedOver = recordedAuditorsOf_(record);
+      auditorEditTarget = { code: stationCode, year: year };
+
+      const hasNames = String(record.auditorNames || '').trim() !== '';
+      const required = auditorRequiredForYear_(year);
+      document.getElementById('auditor-edit-title').textContent =
+        (hasNames ? '更正稽核人員 — ' : '補記稽核人員 — ') + station.name + '　' + year + ' 年';
+      document.getElementById('auditor-edit-hint').textContent =
+        '只修改稽核人員；登錄人、登錄時間與稽核日期都不會變。' +
+        (hasNames ? '目前記載：' + record.auditorNames + '。' : '目前未記載。') +
+        (hasNames && carriedOver.length === 0 ? '（此筆只有姓名、沒有 Email，儲存後將以下方勾選結果取代。）' : '');
+      document.getElementById('auditor-edit-label').textContent = required
+        ? '稽核人員（可複選，當年度必填）'
+        : '稽核人員（可複選，全部取消勾選即改回「未記載」）';
+      renderAuditorChecklist_(document.getElementById('auditor-edit-list'), carriedOver.map(function (a) { return a.email; }), carriedOver);
+      document.getElementById('auditor-edit-error').textContent = '';
+      document.getElementById('auditor-edit-overlay').classList.add('open');
+    }
+
+    function closeAuditorEditModal() {
+      document.getElementById('auditor-edit-overlay').classList.remove('open');
+      auditorEditTarget = null;
+    }
+
+    document.getElementById('auditor-edit-cancel').addEventListener('click', closeAuditorEditModal);
+    document.getElementById('auditor-edit-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeAuditorEditModal();
+    });
+    document.getElementById('auditor-edit-save').addEventListener('click', function () {
+      if (!auditorEditTarget) return;
+      const errorEl = document.getElementById('auditor-edit-error');
+      const checked = checkedAuditorEmails_(document.getElementById('auditor-edit-list'));
+      if (auditorRequiredForYear_(auditorEditTarget.year) && checked.length === 0) {
+        errorEl.textContent = '當年度的稽核紀錄須至少記載一位稽核人員，不可清空。';
+        return;
+      }
+      const call = callServer('updateAuditRecordAuditors', auditorEditTarget.code, auditorEditTarget.year, checked);
+      closeAuditorEditModal();
+      runWrite(PROGRESS_MESSAGES.record, call, applyStationDelta);
+    });
+
+    // =============================================
     // 補登歷史稽核紀錄
     // =============================================
     const MIN_BACKFILL_YEAR = 2000; // 與後端 ENV.MIN_AUDIT_YEAR 一致
 
     let backfillingCode = null; // 補登 modal 目前操作的駐站
+    let backfillAuditorTouched = false; // 使用者手動改過人員後，改日期不再覆蓋其勾選
 
     function openBackfillModal(stationCode) {
       const station = allStations().find(s => s.code === stationCode);
@@ -2842,9 +3077,34 @@
       document.getElementById('backfill-date').value = new Date().toISOString().slice(0, 10);
       document.getElementById('backfill-hint').innerHTML = '';
       validateBackfillDate_(); // 預填今天後先跑一次年度檢核提示
+      backfillAuditorTouched = false;
+      refreshBackfillAuditors_(); // 稽核人員預設帶入排定時的人員（僅限今年度）
       document.getElementById('backfill-error').textContent = '';
       document.getElementById('backfill-overlay').classList.add('open');
     }
+
+    /** 依目前選的日期年度更新稽核人員清單：今年度預設帶入排定人員，過去年度不帶入且改為選填 */
+    function refreshBackfillAuditors_() {
+      const station = allStations().find(function (s) { return s.code === backfillingCode; });
+      const dateValue = document.getElementById('backfill-date').value;
+      const year = dateValue ? Number(dateValue.slice(0, 4)) : Number(dashboard.currentYear);
+      const listEl = document.getElementById('backfill-auditor-list');
+      const hintEl = document.getElementById('backfill-auditor-hint');
+      const preset = (year === Number(dashboard.currentYear)) ? planAuditorEmails_(station) : [];
+
+      // 排定人員只屬於今年度：改選過去年度時不帶入，避免把今年的排定人員誤記到舊紀錄
+      if (!backfillAuditorTouched) renderAuditorChecklist_(listEl, preset, []);
+      document.getElementById('backfill-auditor-label').textContent = auditorRequiredForYear_(year)
+        ? '稽核人員（可複選，當年度必填）'
+        : '稽核人員（可複選，補登過去年度不知道可留空，將顯示「未記載」）';
+      hintEl.textContent = (!backfillAuditorTouched && preset.length > 0)
+        ? '已帶入排定時選的稽核人員，實際到場不同請自行修改。'
+        : '';
+    }
+
+    document.getElementById('backfill-auditor-list').addEventListener('change', function () {
+      backfillAuditorTouched = true;
+    });
 
     function closeBackfillModal() {
       document.getElementById('backfill-overlay').classList.remove('open');
@@ -2875,6 +3135,8 @@
 
     document.getElementById('backfill-date').addEventListener('change', validateBackfillDate_);
     document.getElementById('backfill-date').addEventListener('input', validateBackfillDate_);
+    document.getElementById('backfill-date').addEventListener('change', refreshBackfillAuditors_);
+    document.getElementById('backfill-date').addEventListener('input', refreshBackfillAuditors_);
 
     document.getElementById('backfill-cancel').addEventListener('click', closeBackfillModal);
     document.getElementById('backfill-overlay').addEventListener('click', function (e) {
@@ -2889,7 +3151,13 @@
 
       const dateText = dateValue.replace(/-/g, '/');
       const code = backfillingCode;
-      const call = callServer('recordAudits', [code], Number(dateText.slice(0, 4)), dateText);
+      const auditYear = Number(dateText.slice(0, 4));
+      const auditorEmails = checkedAuditorEmails_(document.getElementById('backfill-auditor-list'));
+      if (auditorRequiredForYear_(auditYear) && auditorEmails.length === 0) {
+        errorEl.textContent = '當年度的稽核紀錄須至少勾選一位稽核人員。';
+        return;
+      }
+      const call = callServer('recordAudits', [code], auditYear, dateText, auditorEmails);
       closeBackfillModal();
       runWrite(PROGRESS_MESSAGES.record, call, applyStationDelta);
     });
@@ -2982,9 +3250,19 @@
         const certTag = certSince ? (r.year >= certSince
           ? '<span class="hist-tag cert-in">認證期內</span>'
           : '<span class="hist-tag cert-pre">升認證前</span>') : '';
+        // 稽核人員＝實際執行稽核的人；登錄人＝按下登錄的操作者，兩者分開標示以免誤讀
+        const hasAuditors = String(r.auditorNames || '').trim() !== '';
+        const auditorsHtml = '<span class="who-label">稽核</span>' + (hasAuditors
+          ? '<span class="auditors">' + escapeHtml(r.auditorNames) + '</span>'
+          : '<span class="unrecorded">未記載</span>');
+        const recorderHtml = r.recorder
+          ? '　<span class="who-label">登錄</span><span class="mono dim">' + escapeHtml(r.recorder) + '</span>'
+          : '';
         return '<li><span class="hist-main">' + dateText + countedTag + certTag +
-          (r.recorder ? '　<span class="mono dim">' + escapeHtml(r.recorder) + '</span>' : '') +
-          (r.note ? '　' + escapeHtml(r.note) : '') + '</span>' +
+          '<span class="hist-who">' + auditorsHtml + recorderHtml + '</span>' +
+          (r.note ? escapeHtml(r.note) : '') + '</span>' +
+          '<button class="hist-edit" data-code="' + escapeHtml(station.code) + '" data-year="' + r.year +
+          '" title="只修改稽核人員，不動登錄人與日期">' + (hasAuditors ? '更正稽核人員' : '補記稽核人員') + '</button>' +
           '<button class="hist-del" data-del-kind="station" data-code="' + escapeHtml(station.code) +
           '" data-year="' + r.year + '" title="刪除此筆紀錄" aria-label="刪除 ' + r.year + ' 年紀錄">×</button></li>';
       }).join('') + '</ul>';
@@ -3006,6 +3284,11 @@
     }
 
     function bindHistoryDeleteEvents_() {
+      document.getElementById('history-body').querySelectorAll('.hist-edit').forEach(function (el) {
+        el.addEventListener('click', function () {
+          openAuditorEditModal(el.dataset.code, Number(el.dataset.year));
+        });
+      });
       document.getElementById('history-body').querySelectorAll('.hist-del').forEach(function (el) {
         el.addEventListener('click', function () {
           if (el.dataset.delKind === 'station') confirmDeleteRecord(el.dataset.code, Number(el.dataset.year));
@@ -3427,26 +3710,64 @@
       document.getElementById('year-select-wrap').classList.toggle('hidden', !hasSelection);
     }
 
+    // 批次登錄：整批共用同一組稽核人員；各站人員不同請改用卡片上的「登錄完成」逐站登錄
+    let batchRecordState = null; // { year, codes }
+
     function confirmRecordAudits() {
       const year = Number(document.getElementById('year-select').value);
       const stations = allStations().filter(s => selectedCodes.has(s.code));
-      openModal({
-        title: '登錄 ' + year + ' 年稽核紀錄',
-        bodyHtml:
-          '<p>以下 ' + stations.length + ' 間駐站將標記為 <strong>' + year + ' 年已稽核</strong>：</p>' +
-          '<ul>' + stations.map(function (s) {
-            return '<li>' + escapeHtml(s.name) + ' <span class="mono">' + escapeHtml(s.code) + '</span></li>';
-          }).join('') + '</ul>' +
-          '<p class="mono">紀錄將寫入「稽核紀錄」工作表，可於卡片年度標籤上刪除更正。</p>',
-        confirmLabel: '確認登錄 ' + stations.length + ' 間',
-        danger: false,
-        onConfirm: function () {
-          const codes = Array.from(selectedCodes);
-          selectedCodes.clear();
-          runWrite(PROGRESS_MESSAGES.record, callServer('recordAudits', codes, year), applyStationDelta);
-        },
-      });
+      if (stations.length === 0) return;
+      batchRecordState = { year: year, codes: stations.map(function (s) { return s.code; }) };
+
+      document.getElementById('batch-record-title').textContent = '登錄 ' + year + ' 年稽核紀錄';
+      document.getElementById('batch-record-stations').innerHTML =
+        '<p>以下 ' + stations.length + ' 間駐站將標記為 <strong>' + year + ' 年已稽核</strong>：</p>' +
+        '<ul>' + stations.map(function (s) {
+          return '<li>' + escapeHtml(s.name) + ' <span class="mono">' + escapeHtml(s.code) + '</span></li>';
+        }).join('') + '</ul>' +
+        '<p class="mono">紀錄將寫入「稽核紀錄」工作表，可於卡片歷年紀錄中更正。</p>';
+
+      // 排定人員只屬於今年度；且所選駐站的排定人員全部相同才預設帶入
+      const isCurrentYear = year === Number(dashboard.currentYear);
+      const preset = isCurrentYear ? commonPlanAuditorEmails_(stations) : [];
+      renderAuditorChecklist_(document.getElementById('batch-record-auditor-list'), preset, []);
+      document.getElementById('batch-record-auditor-label').textContent = auditorRequiredForYear_(year)
+        ? '稽核人員（整批共用，可複選，當年度必填）'
+        : '稽核人員（整批共用，可複選，補登過去年度不知道可留空）';
+      const anyPlanAuditors = isCurrentYear && stations.some(function (s) { return planAuditorEmails_(s).length > 0; });
+      document.getElementById('batch-record-auditor-hint').textContent = preset.length > 0
+        ? '所選駐站排定的稽核人員相同，已帶入，實際到場不同請自行修改。'
+        : (anyPlanAuditors
+          ? '各駐站排定的稽核人員不同，未預設帶入。若各站人員不同，請改用卡片上的「登錄完成」逐站登錄。'
+          : '');
+      document.getElementById('batch-record-save').textContent = '確認登錄 ' + stations.length + ' 間';
+      document.getElementById('batch-record-error').textContent = '';
+      document.getElementById('batch-record-overlay').classList.add('open');
     }
+
+    function closeBatchRecordModal() {
+      document.getElementById('batch-record-overlay').classList.remove('open');
+      batchRecordState = null;
+    }
+
+    document.getElementById('batch-record-cancel').addEventListener('click', closeBatchRecordModal);
+    document.getElementById('batch-record-overlay').addEventListener('click', function (e) {
+      if (e.target === this) closeBatchRecordModal();
+    });
+    document.getElementById('batch-record-save').addEventListener('click', function () {
+      if (!batchRecordState) return;
+      const errorEl = document.getElementById('batch-record-error');
+      const auditorEmails = checkedAuditorEmails_(document.getElementById('batch-record-auditor-list'));
+      if (auditorRequiredForYear_(batchRecordState.year) && auditorEmails.length === 0) {
+        errorEl.textContent = '當年度的稽核紀錄須至少勾選一位稽核人員。';
+        return;
+      }
+      const year = batchRecordState.year;
+      const codes = batchRecordState.codes;
+      closeBatchRecordModal();
+      selectedCodes.clear();
+      runWrite(PROGRESS_MESSAGES.record, callServer('recordAudits', codes, year, '', auditorEmails), applyStationDelta);
+    });
 
     function confirmDeleteRecord(stationCode, year) {
       const station = allStations().find(s => s.code === stationCode);
@@ -3512,9 +3833,12 @@
         mode: 'FIXED',
         cycleStartYear: 2026,
         records: [
-          { stationCode: 'GRP-CO-A01', year: 2026, auditDate: '2026/03/15' },
-          { stationCode: 'GRP-CO-A02', year: 2025, auditDate: '2025/11/02' },
-          { stationCode: 'GRP-CO-B01', year: 2026, auditDate: '2026/01/20' },
+          // 稽核人員＝實際執行稽核的人；登錄人＝按下登錄的人（A01 示範：稽核人員兩位、由第三人代登）
+          { stationCode: 'GRP-CO-A01', year: 2026, auditDate: '2026/03/15', recorder: 'audit.sun@example.com',
+            auditorNames: '稽核·趙、稽核·錢', auditorEmails: 'audit.chao@example.com,audit.chien@example.com' },
+          { stationCode: 'GRP-CO-A02', year: 2025, auditDate: '2025/11/02' }, // 舊資料：未記載稽核人員
+          { stationCode: 'GRP-CO-B01', year: 2026, auditDate: '2026/01/20', recorder: 'audit.lee@example.com',
+            auditorNames: '稽核·李', auditorEmails: 'audit.lee@example.com' },
           { stationCode: 'GRP-CO-B03', year: 2026, auditDate: '' },  // 僅年度示範（早期資料）
           { stationCode: 'GRP-CO-B04', year: 2022, auditDate: '' },  // 逾期示範：距 2026 已滿三年
           { stationCode: 'GRP-CO-A03', year: 2026, auditDate: '2026/05/10' }, // 升認證前(2027 生效)已稽 → 只進三年總覽、不進兩年輪
@@ -3594,7 +3918,7 @@
         const r = (new URLSearchParams(location.search).get('role') || 'auditor').toUpperCase();
         return ['AUDITOR', 'VIEWER', 'FORBIDDEN'].indexOf(r) >= 0 ? r : 'AUDITOR';
       })();
-      const WRITE_FNS = ['saveStationAssignment', 'cancelAssignment', 'recordAudits', 'deleteAuditRecord',
+      const WRITE_FNS = ['saveStationAssignment', 'cancelAssignment', 'recordAudits', 'updateAuditRecordAuditors', 'deleteAuditRecord',
         'planCenterAudit', 'cancelCenterPlan', 'recordCenterAudit', 'deleteCenterAuditRecord',
         'addTriggerEvent', 'deleteTriggerEvent', 'setCycleMode', 'setCycleStartYear', 'importAuditRecords',
         'saveCertifiedStations'];
@@ -3688,8 +4012,33 @@
       if (fnName === 'recordAudits') {
         // 與後端同邏輯：未帶日期且登錄今年時自動填當天
         const auditDate = args[2] || (args[1] === currentYear ? new Date().toISOString().slice(0, 10).replace(/-/g, '/') : '');
-        args[0].forEach(code => state.records.push({ stationCode: code, year: args[1], auditDate: auditDate }));
+        const picked = resolveAuditorSelection_(args[3], auditors, []);
+        if (picked.unknownEmails.length) return Promise.reject(new Error('「' + picked.unknownEmails[0] + '」不在稽核人員名單中'));
+        const needed = checkAuditorRequirement_(args[1], currentYear, picked.auditors);
+        if (needed) return Promise.reject(new Error(needed));
+        const fields = buildAuditorFields_(picked.auditors);
+        args[0].forEach(function (code) {
+          if (state.records.some(r => r.stationCode === code && r.year === args[1])) return; // 同站同年略過
+          state.records.push({ stationCode: code, year: args[1], auditDate: auditDate,
+            recorder: 'preview@local', auditorNames: fields.auditorNames, auditorEmails: fields.auditorEmails });
+          // 登錄完成後排程自動清除（與後端一致）
+          state.assignments = state.assignments.filter(p => !(p.stationCode === code && p.year === args[1]));
+        });
         return delayed_(stationDelta_(args[0], '【預覽模式】已登錄 ' + args[0].length + ' 間駐站'), 600);
+      }
+      if (fnName === 'updateAuditRecordAuditors') {
+        // 與後端同邏輯：可保留原記載者（含已不在名單的人）、當年度不可清空、只動稽核人員欄
+        const rec = state.records.find(r => r.stationCode === args[0] && r.year === args[1]);
+        if (!rec) return Promise.reject(new Error('找不到該筆稽核紀錄，可能已被刪除'));
+        const carried = parseStoredAuditors_(rec.auditorNames, rec.auditorEmails);
+        const picked = resolveAuditorSelection_(args[2], auditors, carried);
+        if (picked.unknownEmails.length) return Promise.reject(new Error('「' + picked.unknownEmails[0] + '」不在稽核人員名單中'));
+        const needed = checkAuditorRequirement_(args[1], currentYear, picked.auditors);
+        if (needed) return Promise.reject(new Error(needed));
+        const fields = buildAuditorFields_(picked.auditors);
+        rec.auditorNames = fields.auditorNames;
+        rec.auditorEmails = fields.auditorEmails;
+        return delayed_(stationDelta_([args[0]], '【預覽模式】已更新稽核人員'), 600);
       }
       if (fnName === 'deleteAuditRecord') {
         const idx = state.records.findIndex(r => r.stationCode === args[0] && r.year === args[1]);
@@ -3802,12 +4151,15 @@
           label: '駐站收案稽核紀錄', columns: STATION_CSV_COLUMNS,
           records: state.records.map(r => ({
             stationCode: r.stationCode, stationName: stationNameOf(r.stationCode), year: r.year,
-            auditDate: r.auditDate || '', recorder: r.recorder || '', note: r.note || '',
+            auditDate: r.auditDate || '', auditorNames: r.auditorNames || '', auditorEmails: r.auditorEmails || '',
+            recorder: r.recorder || '', note: r.note || '',
           })),
           keyFn: r => r.stationCode + '|' + r.year,
           add: rec => state.records.push({
             stationCode: rec.stationCode, year: Number(rec.year) || rec.year,
-            auditDate: rec.auditDate || '', recorder: rec.recorder || '', note: rec.note || '',
+            auditDate: rec.auditDate || '', recorder: 'preview@local', note: rec.note || '',
+            // 與後端一致：稽核人員照檔案原樣寫入，不比對名單、不套用當年度必填
+            auditorNames: rec.auditorNames || '', auditorEmails: rec.auditorEmails || '',
           }),
         };
 
@@ -3858,7 +4210,10 @@
         return Object.assign({}, st, {
           alias: '', managerEmail: '',
           allAuditYears: years.slice().sort(),
-          auditRecords: sortedRecords.map(r => ({ year: r.year, auditDate: r.auditDate || '', recorder: 'preview@local', note: '' })),
+          auditRecords: sortedRecords.map(r => ({
+            year: r.year, auditDate: r.auditDate || '', recorder: r.recorder || 'preview@local', note: '',
+            auditorNames: r.auditorNames || '', auditorEmails: r.auditorEmails || '',
+          })),
           lastAuditDisplay: latest ? (latest.auditDate || latest.year + ' 年') : '',
           assignment: assignment && { auditorNames: assignment.auditorNames, auditorEmails: assignment.auditorEmails, plannedDate: assignment.plannedDate },
           history: buildAuditHistory(years, currentYear),

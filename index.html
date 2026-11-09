@@ -295,10 +295,13 @@
       background: var(--color-card);
       padding: var(--space-3);
       display: grid;
-      grid-template-columns: minmax(220px, 1.4fr) minmax(140px, .75fr) minmax(140px, .75fr) minmax(140px, .75fr) minmax(210px, 1fr) auto;
+      /* 搜尋、三個篩選下拉可收縮（minmax(0, …)），避免欄位最小寬度總和超過面板而把右側擠出卡片；
+         調派日期欄需容納「日期＋重新整理」故保留下限；最右為筆數＋清除按鈕。 */
+      grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, .8fr)) minmax(200px, 1.1fr) auto;
       gap: var(--space-3);
       align-items: end;
     }
+    .station-filter-panel > * { min-width: 0; }
     .dispatch-date-row {
       display: flex;
       gap: var(--space-1);
@@ -362,13 +365,14 @@
       line-height: 1;
       pointer-events: none;
     }
+    /* 筆數在上、清除鈕在下堆疊靠右：欄寬約 90px，不再占 150px 把其他欄位擠窄 */
     .filter-actions {
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      align-items: flex-end;
       justify-content: flex-end;
-      gap: var(--space-2);
-      flex-wrap: wrap;
-      min-width: 150px;
+      gap: var(--space-1);
+      min-width: 0;
     }
     .filter-count {
       color: var(--color-muted);
@@ -389,9 +393,17 @@
       opacity: .5;
       cursor: default;
     }
+    /* 視窗不夠寬時改三欄換行：搜尋獨占一列，三個篩選一列，調派日期＋筆數／清除一列 */
+    @media (max-width: 1100px) {
+      .station-filter-panel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .filter-field.search { grid-column: 1 / -1; }
+      .station-filter-panel .dispatch-field { grid-column: span 2; }
+      .filter-actions { flex-direction: row; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+    }
     @media (max-width: 900px) {
       .station-filter-panel { grid-template-columns: 1fr 1fr; }
       .filter-field.search { grid-column: 1 / -1; }
+      .station-filter-panel .dispatch-field { grid-column: auto; }
       .filter-actions { justify-content: flex-start; }
     }
     @media (max-width: 560px) {

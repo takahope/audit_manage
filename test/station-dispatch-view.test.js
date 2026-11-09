@@ -484,6 +484,10 @@ const fakeEmptyDiv = {
 };
 fakeCard.listeners.click({ target: fakeEmptyDiv });
 assert(historyModalOpened, '點擊卡片非互動區域應正常觸發 openHistoryModal');
+historyModalOpened = false;
+const fakeCoverage = { closest: function (selector) { return selector.includes('.staffing-coverage') ? this : null; } };
+fakeCard.listeners.click({ target: fakeCoverage });
+assert(!historyModalOpened, '捲動年度人力區間時不得開啟歷年紀錄彈窗');
 sandbox.openDispatchDetail_ = realOpenDispatchDetail;
 console.log('✓ 事件隔離通過');
 

@@ -541,7 +541,8 @@
     .staffing-summary .staffing-detail { color: var(--color-muted); }
     .staffing-summary .staffing-note { color: var(--color-danger); }
     .staffing-coverage { margin-top: var(--space-2); padding: var(--space-2); background: #f8fafc; border-left: 3px solid var(--color-accent); font-size: 12px; }
-    .staffing-coverage ul { margin: var(--space-1) 0 0; padding-left: var(--space-3); }
+    .staffing-coverage ul { margin: var(--space-1) 0 0; padding-left: var(--space-3); max-height: 160px; overflow-y: auto; }
+    .staffing-coverage ul:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
     .staffing-coverage li { margin: 2px 0; }
     .members-list { margin-top: var(--space-2); border-top: 1px dashed var(--color-border); padding-top: var(--space-2); }
     .members-list li {
@@ -1120,6 +1121,7 @@
     const dispatchSnapshotsByYear = new Map();
     const dispatchRequestsByYear = new Map();
     const dispatchRefreshFailuresByYear = new Set();
+    const dispatchCoverageCacheByYear = new Map();
     let selectedDispatchDate = taipeiToday_();
 
     function getDispatchSnapshotForDate_(date) {
@@ -1230,13 +1232,25 @@
       return day.toISOString().slice(0, 10);
     }
 
-    function getZeroStaffCoverage_(stationCode, year) {
+    function getStationCoverage_(stationCode, year) {
       const snapshot = dispatchSnapshotsByYear.get(year);
       if (!snapshot) return { state: 'loading', intervals: [] };
+      let cache = dispatchCoverageCacheByYear.get(year);
+      if (!cache || cache.snapshot !== snapshot) {
+        const recordsByStation = new Map();
+        (snapshot.dispatches || []).forEach(function (record) {
+          const records = recordsByStation.get(record.stationCode) || [];
+          records.push(record);
+          recordsByStation.set(record.stationCode, records);
+        });
+        cache = { snapshot: snapshot, recordsByStation: recordsByStation, coverageByStation: new Map() };
+        dispatchCoverageCacheByYear.set(year, cache);
+      }
+      if (cache.coverageByStation.has(stationCode)) return cache.coverageByStation.get(stationCode);
       const yearStart = year + '-01-01';
       const yearEnd = year + '-12-31';
-      const sourceRecords = (snapshot.dispatches || []).filter(function (record) {
-        return record.stationCode === stationCode && record.startDate <= yearEnd && record.endDate >= yearStart;
+      const sourceRecords = (cache.recordsByStation.get(stationCode) || []).filter(function (record) {
+        return record.startDate <= yearEnd && record.endDate >= yearStart;
       });
       const hasUnidentified = sourceRecords.some(function (record) {
         return !record.isPending && !String(record.nurseName || record.nurseEmail || '').trim();
@@ -1276,7 +1290,9 @@
           intervals.push({ kind: kind, startDate: startDate, endDate: endDate, count: count, time: time });
         }
       }
-      return { state: snapshot.state === 'ready' && hasUnidentified ? 'unidentified' : snapshot.state, intervals: intervals };
+      const coverage = { state: snapshot.state === 'ready' && hasUnidentified ? 'unidentified' : snapshot.state, intervals: intervals };
+      cache.coverageByStation.set(stationCode, coverage);
+      return coverage;
     }
 
     function dispatchPrimary_(view) {
@@ -2144,28 +2160,25 @@
         '、實際收案人數 ' + (staffing.actual === null ? '—' : staffing.actual + ' 人') + '）</span>' +
         (staffingState || staffingStale ? '<div class="staffing-note">' + escapeHtml([staffingState, staffingStale ? '舊資料' : ''].filter(Boolean).join('；')) + '</div>' : '') +
         '</div>';
-      let coverageHtml = '';
-      if (staffing.normal === 0) {
-        const coverage = getZeroStaffCoverage_(station.code, Number(selectedDispatchDate.slice(0, 4)));
-        const rangeText = function (item) {
-          const start = item.startDate.slice(5).replace('-', '/');
-          const end = item.endDate.slice(5).replace('-', '/');
-          return (start === end ? start : start + '–' + end) + ' ' +
-            (item.kind === 'assigned' ? '已指派 ' : '預計指派 ') + item.count + ' 人' +
-            (item.time ? '（' + item.time + '）' : '');
-        };
-        coverageHtml = '<div class="staffing-coverage"><strong>' + escapeHtml(String(selectedDispatchDate.slice(0, 4))) + ' 年人力安排區間</strong>' +
-          (coverage.intervals.length ? '<ul>' + coverage.intervals.map(function (item) {
-            return '<li>' + escapeHtml(rangeText(item)) + '</li>';
-          }).join('') + '</ul>' :
-            coverage.state === 'ready' ? '<div>尚無已登錄或待指派人力資訊</div>' : '') +
-          (coverage.state !== 'ready' ? '<div class="staffing-note">' + escapeHtml(
-              coverage.state === 'partial' ? '區間資料未完整' :
-              coverage.state === 'loading' ? '區間資料載入中' :
-              coverage.state === 'notConfigured' ? '調派資料未啟用' :
-                coverage.state === 'unidentified' ? '有未具名調派紀錄，區間無法完整確認' : '區間資料暫不可用') + '</div>' : '') +
-          (staffingStale ? '<div class="staffing-note">重新整理失敗，顯示舊資料</div>' : '') + '</div>';
-      }
+      const coverage = getStationCoverage_(station.code, Number(selectedDispatchDate.slice(0, 4)));
+      const rangeText = function (item) {
+        const start = item.startDate.slice(5).replace('-', '/');
+        const end = item.endDate.slice(5).replace('-', '/');
+        return (start === end ? start : start + '–' + end) + ' ' +
+          (item.kind === 'assigned' ? '已指派 ' : '預計指派 ') + item.count + ' 人' +
+          (item.time ? '（' + item.time + '）' : '');
+      };
+      const coverageHtml = '<div class="staffing-coverage"><strong>' + escapeHtml(String(selectedDispatchDate.slice(0, 4))) + ' 年人力安排區間</strong>' +
+        (coverage.intervals.length ? '<ul tabindex="0" aria-label="年度人力安排區間">' + coverage.intervals.map(function (item) {
+          return '<li>' + escapeHtml(rangeText(item)) + '</li>';
+        }).join('') + '</ul>' :
+          coverage.state === 'ready' ? '<div>尚無已登錄或待指派人力資訊</div>' : '') +
+        (coverage.state !== 'ready' ? '<div class="staffing-note">' + escapeHtml(
+            coverage.state === 'partial' ? '區間資料未完整' :
+            coverage.state === 'loading' ? '區間資料載入中' :
+            coverage.state === 'notConfigured' ? '調派資料未啟用' :
+              coverage.state === 'unidentified' ? '有未具名調派紀錄，區間無法完整確認' : '區間資料暫不可用') + '</div>' : '') +
+        (staffingStale ? '<div class="staffing-note">重新整理失敗，顯示舊資料</div>' : '') + '</div>';
 
       return (
         '<div class="' + cardClasses.join(' ') + '" data-code="' + escapeHtml(station.code) + '">' +
@@ -2237,7 +2250,7 @@
 
       // 點擊卡片任意非互動區域 → 開啟歷年稽核紀錄
       card.addEventListener('click', function (e) {
-        if (e.target.closest('input, button, label, .members-toggle')) return;
+        if (e.target.closest('input, button, label, .members-toggle, .staffing-coverage')) return;
         openHistoryModal('station', card.dataset.code);
       });
     }

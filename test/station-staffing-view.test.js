@@ -1,4 +1,4 @@
-/** 駐站卡片收案人力與零常態人員區間。執行：node test/station-staffing-view.test.js */
+/** 駐站卡片收案人力與全年指派區間。執行：node test/station-staffing-view.test.js */
 'use strict';
 
 const assert = require('assert');
@@ -73,6 +73,11 @@ let card = context.buildStationCard(station);
 assert(card.includes('常態收案人員 2 人'), '卡片須標明常態收案人員');
 assert(card.includes('預計收案人數 4 人'), '卡片須顯示常態加待指派需求');
 assert(card.includes('實際收案人數 2 人'), '卡片須顯示常態加調入減調出');
+assert(card.includes('10/01–10/03 已指派'), '有常態收案人員的卡片仍須顯示年度已指派區間');
+assert(card.includes('10/04–10/05 預計指派 2 人'), '有常態收案人員的卡片仍須顯示未被指派覆蓋的需求區間');
+const noDispatchCard = context.buildStationCard(Object.assign({}, station, { code: 'S99' }));
+assert(noDispatchCard.includes('年人力安排區間') && noDispatchCard.includes('尚無已登錄或待指派人力資訊'),
+  '有常態人員但全年無調派紀錄時仍須顯示區間的空狀態');
 
 // 有紀錄 ID 卻沒有姓名／Email 的紀錄，不能當作一名已指派人員。
 context.anonymous = { year: 2026, state: 'ready', dispatches: [
@@ -82,7 +87,7 @@ vm.runInContext('dispatchSnapshotsByYear.set(2026, anonymous);', context);
 const unidentified = context.getStationStaffing_(Object.assign({}, station, { members: [] }), '2026-10-02');
 assert.strictEqual(unidentified.actual, null, '沒有可識別人員的調入紀錄不得推算確定實際人數');
 assert.strictEqual(unidentified.state, 'unidentified');
-assert.strictEqual(context.getZeroStaffCoverage_('S01', 2026).state, 'unidentified', '未具名紀錄不得被當成全年無人');
+assert.strictEqual(context.getStationCoverage_('S01', 2026).state, 'unidentified', '未具名紀錄不得被當成全年無人');
 vm.runInContext('dispatchSnapshotsByYear.set(2026, ready);', context);
 
 // 非 ready 狀態不得由空陣列推論人數；常態人數仍可由 HR 顯示。
@@ -93,11 +98,12 @@ assert(card.includes('常態收案人員 2 人'));
 assert(card.includes('預計收案人數 —'));
 assert(card.includes('實際收案人數 —'));
 assert(card.includes('資料未完整'));
+assert(card.includes('區間資料未完整'), '有常態收案人員的卡片也須標明年度區間資料狀態');
 
-// 常態為零時，逐日期優先顯示已指派；待指派只補上沒有已指派的日期。
+// 逐日期優先顯示已指派；待指派只補上沒有已指派的日期。
 vm.runInContext('dispatchSnapshotsByYear.set(2026, ready);', context);
 const emptyStation = Object.assign({}, station, { members: [{ name: '主管', title: '駐站管理員' }] });
-const coverage = context.getZeroStaffCoverage_('S01', 2026);
+const coverage = context.getStationCoverage_('S01', 2026);
 assert.deepStrictEqual(JSON.parse(JSON.stringify(coverage.intervals.map(x => [x.kind, x.startDate, x.endDate]))), [
   ['assigned', '2026-10-01', '2026-10-03'],
   ['pending', '2026-10-04', '2026-10-05'],
@@ -110,10 +116,31 @@ assert(card.includes('10/01–10/03 已指派'), '卡片須顯示已指派人員
 assert(card.includes('10/04–10/05 預計指派 2 人'), '卡片須顯示未被已指派覆蓋的需求日期區間');
 assert(card.includes('08:00 ~ 12:00') || card.includes('多時段'), '卡片須提供有紀錄的工作時段');
 
-// 年度資料不完整時，零常態區間不可宣稱完整。
+// 年度資料不完整時，人力區間不可宣稱完整。
 vm.runInContext('dispatchSnapshotsByYear.set(2026, partial);', context);
 card = context.buildStationCard(emptyStation);
 assert(card.includes('區間資料未完整'));
 assert(!card.includes('尚無已登錄或待指派人力資訊'));
 
-console.log('✓ 駐站卡片收案人力與零常態人員區間測試通過');
+// 多張卡片使用同一年度快照時只整理來源紀錄一次；新快照須重新整理。
+let sourceReads = 0;
+const cachedSnapshot = { year: 2027, state: 'ready', get dispatches() {
+  sourceReads++;
+  return [{ id: 'assigned27', stationCode: 'S01', startDate: '2027-01-01', endDate: '2027-01-01', isPending: false, nurseName: '甲' }];
+} };
+context.cachedSnapshot = cachedSnapshot;
+vm.runInContext('dispatchSnapshotsByYear.set(2027, cachedSnapshot);', context);
+assert.strictEqual(typeof context.getStationCoverage_, 'function', '年度人力區間應有共用查詢入口');
+assert.strictEqual(context.getStationCoverage_('S01', 2027).intervals[0].kind, 'assigned');
+assert.strictEqual(context.getStationCoverage_('S02', 2027).intervals.length, 0);
+context.getStationCoverage_('S01', 2027);
+assert.strictEqual(sourceReads, 1, '同一快照的多站查詢不得重複掃描來源紀錄');
+const refreshedSnapshot = { year: 2027, state: 'ready', dispatches: [
+  { id: 'pending27', stationCode: 'S01', startDate: '2027-01-02', endDate: '2027-01-02', isPending: true, demandCount: 2 }
+] };
+context.refreshedSnapshot = refreshedSnapshot;
+vm.runInContext('dispatchSnapshotsByYear.set(2027, refreshedSnapshot);', context);
+assert.strictEqual(context.getStationCoverage_('S01', 2027).intervals[0].kind, 'pending',
+  '重新整理後的新快照不可沿用舊區間');
+
+console.log('✓ 駐站卡片收案人力與全年指派區間測試通過');
